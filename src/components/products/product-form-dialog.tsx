@@ -117,11 +117,12 @@ export function ProductFormDialog({
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
     defaultValues: product ? 
-      { ...product, supplierId: product.supplierId || "", units: product.units || [{ name: 'pcs', price: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }] } : 
+      { ...product, supplierId: product.supplierId || NO_SUPPLIER_VALUE, units: product.units || [{ name: 'pcs', price: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }] } : 
       {
         name: "",
-        supplierId: "",
+        supplierId: NO_SUPPLIER_VALUE,
         buyOwn: false,
+        barcode: "",
         units: [{ name: '', price: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }],
       },
   });
@@ -145,7 +146,7 @@ export function ProductFormDialog({
       
       form.reset({
         name: product?.name || "",
-        supplierId: product?.supplierId || "", // Keep empty string for placeholder
+        supplierId: product?.supplierId || NO_SUPPLIER_VALUE, 
         buyOwn: product?.buyOwn || false,
         barcode: product?.barcode || "",
         units: initialUnits,
@@ -187,28 +188,41 @@ export function ProductFormDialog({
         conversionFactor: unit.isBaseUnit ? 1 : (unit.conversionFactor || 1),
     }));
 
-    const productDataSubmit: Partial<ProductFormValues> & { merchantId: string, units: typeof processedUnits, supplierId?: string } = {
-        ...formData,
-        supplierId: formData.supplierId === NO_SUPPLIER_VALUE ? undefined : formData.supplierId,
+    // Prepare data for Firestore, explicitly excluding undefined optional fields
+    const dataForFirestore: {
+        name: string;
+        units: typeof processedUnits;
+        merchantId: string;
+        buyOwn: boolean;
+        supplierId?: string;
+        barcode?: string;
+        // Timestamps will be added by Firestore
+    } = {
+        name: formData.name,
         units: processedUnits,
         merchantId: currentUser.merchantId,
+        buyOwn: formData.buyOwn,
     };
-    
-    // Ensure optional fields are truly optional if empty string
-    if (productDataSubmit.barcode === "") productDataSubmit.barcode = undefined;
 
+    if (formData.supplierId && formData.supplierId !== NO_SUPPLIER_VALUE && formData.supplierId.trim() !== "") {
+        dataForFirestore.supplierId = formData.supplierId;
+    }
+
+    if (formData.barcode && formData.barcode.trim() !== "") {
+        dataForFirestore.barcode = formData.barcode.trim();
+    }
 
     try {
       if (product) { 
         const productRef = doc(db, "products", product.id);
         await updateDoc(productRef, {
-          ...productDataSubmit,
+          ...dataForFirestore,
           updatedAt: serverTimestamp(),
         });
         toast({ title: "Product Updated", description: `Product ${formData.name} has been updated.` });
       } else { 
         await addDoc(collection(db, "products"), {
-          ...productDataSubmit,
+          ...dataForFirestore,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
@@ -219,7 +233,11 @@ export function ProductFormDialog({
       form.reset();
     } catch (error) {
       console.error("Error saving product: ", error);
-      toast({ title: "Save Failed", description: "Could not save product data. Please try again.", variant: "destructive" });
+       if (error instanceof Error && 'code' in error) { 
+        toast({ title: "Save Failed", description: `Firestore error: ${error.message}. Code: ${(error as any).code}`, variant: "destructive", duration: 7000 });
+      } else {
+        toast({ title: "Save Failed", description: "Could not save product data. Please try again.", variant: "destructive" });
+      }
     }
     setIsLoading(false);
   };
@@ -352,7 +370,7 @@ export function ProductFormDialog({
                 render={({ field }) => (
                     <FormItem>
                     <FormLabel>Supplier (Optional)</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || ""}>
+                    <Select onValueChange={field.onChange} value={field.value || NO_SUPPLIER_VALUE}>
                         <FormControl>
                         <SelectTrigger>
                              <PackageSearch className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
