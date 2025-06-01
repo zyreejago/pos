@@ -6,8 +6,8 @@ import { AppHeader } from '@/components/layout/app-header';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"; 
 import { useSidebar } from '@/components/ui/sidebar'; 
-import React, { useEffect } from 'react'; // Added React and useEffect
-import { useRouter, usePathname } from 'next/navigation'; // Added usePathname
+import React, { useEffect } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
 
 function MobileSheetProvider({ children }: { children: React.ReactNode }) {
   const { openMobile, setOpenMobile } = useSidebar();
@@ -35,13 +35,13 @@ export default function AppLayout({
     if (typeof window !== 'undefined') {
       const mockUserStr = localStorage.getItem('mockUser');
       let userRole = null;
+
       if (mockUserStr) {
         try {
           const mockUser = JSON.parse(mockUserStr);
           userRole = mockUser.role;
         } catch (e) {
           console.error("Error parsing mockUser in AppLayout:", e);
-          // Potentially clear corrupted user data and redirect to login
           localStorage.removeItem('mockUser');
           localStorage.removeItem('selectedOutletId');
           localStorage.removeItem('selectedOutletName');
@@ -49,11 +49,10 @@ export default function AppLayout({
           return;
         }
       } else {
-        // No user found, redirect to login if not already on an auth page (handled by middleware or page-specific logic)
+        // No user found, redirect to login if not already on an auth page
         // For this layout, if no user, they shouldn't be here unless it's a public part of (app)
-        // but we redirect to login if they are not on an auth page
         if (!pathname.startsWith('/auth')) { // Assuming auth pages are outside this layout
-             // router.push('/login'); // This might be too aggressive for (app) layout
+          // router.push('/login'); // This might be too aggressive for (app) layout
         }
       }
 
@@ -61,8 +60,8 @@ export default function AppLayout({
       
       // If user is logged in but not superadmin, and not in admin section
       if (userRole && userRole !== 'superadmin' && !pathname.startsWith('/admin')) {
-        // And if no outlet is selected, and they are not on the select-outlet page
-        if (!selectedOutletId && pathname !== '/select-outlet') {
+        // And if no outlet is selected, and they are not on the select-outlet page OR the outlets management page
+        if (!selectedOutletId && pathname !== '/select-outlet' && pathname !== '/outlets') {
           router.push('/select-outlet');
         }
       }
