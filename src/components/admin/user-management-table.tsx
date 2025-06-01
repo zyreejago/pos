@@ -108,8 +108,6 @@ export function UserManagementTable() {
               toastMessage = `User ${user.name} has been deactivated.`;
               break;
           case 'delete':
-              // This only deletes Firestore document. Auth user deletion needs Admin SDK or manual Firebase Console action.
-              // Frontend client SDK cannot delete other users' auth accounts.
               await deleteDoc(userDocRef);
               toastMessage = `User ${user.name}'s data has been deleted from the database. Their authentication account may still exist.`;
               toast({ title: "User Data Deleted", description: toastMessage, variant: "destructive" });
@@ -144,6 +142,20 @@ export function UserManagementTable() {
     }
     setIsLoading(true);
     let firebaseUserUID: string | null = null; 
+    const loggedInSuperAdmin = auth.currentUser;
+
+    if (!loggedInSuperAdmin) {
+        toast({ title: "Authentication Error", description: "Superadmin not logged in. Please re-login.", variant: "destructive" });
+        setIsLoading(false);
+        return;
+    }
+    
+    // DIAGNOSTIC TOAST
+    toast({
+      title: "Debug Info: Attempting Add Merchant",
+      description: `Logged in Superadmin UID: ${loggedInSuperAdmin.uid}. Adding merchant: ${data.email}`,
+      duration: 9000, // Longer duration for debug
+    });
 
     try {
         const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
@@ -162,6 +174,8 @@ export function UserManagementTable() {
                 merchantId: firebaseUser.uid, 
                 createdAt: serverTimestamp(),
             };
+            
+            // Attempt to write to Firestore
             await setDoc(doc(db, "users", firebaseUser.uid), newUserDoc);
 
             toast({ title: "Merchant Added", description: `Merchant ${data.name} with admin ${data.email} has been created and activated.` });
@@ -172,57 +186,49 @@ export function UserManagementTable() {
         console.error("Error adding new merchant: ", error);
         let errorMessage = "An unexpected error occurred. Please try again.";
 
-        if (error.name === 'FirebaseError') {
-            switch (error.code) {
-                case 'auth/email-already-in-use':
-                    errorMessage = "This email is already registered in Authentication.";
-                    // Note: The auth user was still created if this error happens *after* auth creation,
-                    // which isn't the case here but good to be aware of error flow.
-                    break;
-                case 'auth/weak-password':
-                    errorMessage = "The password is too weak. Please choose a stronger password.";
-                    break;
-                // Firestore specific errors might not always have 'permission-denied' as code from client SDK like this
-                // but can be caught by checking message or if the error object has a 'firestore' context.
-                case 'permission-denied': // More common for Firestore rules
-                    errorMessage = "Failed to save merchant data to Firestore: Permission denied. Please check Firestore rules and superadmin data.";
-                    // If auth user was created but Firestore failed, we might want to delete the auth user.
-                    // This is an advanced operation and requires careful handling (e.g. re-authenticating admin).
-                    // For simplicity, we are not doing that here. The superadmin would need to manually delete the auth user.
-                    if (firebaseUserUID) {
-                         errorMessage += ` Auth user ${data.email} was created but Firestore data failed. Manual cleanup of auth user may be needed.`;
-                    }
-                    break;
-                default:
-                    if (error.message && error.message.toLowerCase().includes('firestore')) {
-                        errorMessage = `Firestore error: ${error.message}. Check rules and data.`;
-                         if (firebaseUserUID) {
-                            errorMessage += ` Auth user ${data.email} was created. Manual cleanup may be needed.`;
+        if (error.name === 'FirebaseError' || error.constructor.name === 'FirebaseError') { // Broader check for FirebaseError
+            // Check if it's a Firestore permission error specifically
+            if (error.message && error.message.toLowerCase().includes('permission-denied') && error.message.toLowerCase().includes('firestore')) {
+                 errorMessage = `Failed to save merchant data to Firestore: Permission denied. Please check Firestore rules and superadmin data. Auth user ${data.email} was created but Firestore data failed. Manual cleanup of auth user may be needed.`;
+            } else {
+                 switch (error.code) {
+                    case 'auth/email-already-in-use':
+                        errorMessage = `This email (${data.email}) is already registered in Authentication.`;
+                        break;
+                    case 'auth/weak-password':
+                        errorMessage = "The password is too weak. Please choose a stronger password.";
+                        break;
+                    default:
+                        if (error.message && error.message.toLowerCase().includes('firestore')) {
+                            errorMessage = `Firestore error: ${error.message}. Check rules and data.`;
+                             if (firebaseUserUID) {
+                                errorMessage += ` Auth user ${data.email} was created. Manual cleanup may be needed.`;
+                            }
+                        } else if (error.message && error.message.toLowerCase().includes('auth')) {
+                            errorMessage = `Authentication error: ${error.message}`;
+                        } else {
+                            errorMessage = `Failed to add merchant: ${error.message || 'Unknown error'}`;
                         }
-                    } else if (error.message && error.message.toLowerCase().includes('auth')) {
-                        errorMessage = `Authentication error: ${error.message}`;
-                    } else {
-                        errorMessage = `Failed to add merchant: ${error.message || 'Unknown error'}`;
-                    }
-                    break;
+                        break;
+                }
             }
         } else {
              errorMessage = `Failed to add merchant: ${error.toString()}`;
         }
         
-        toast({ title: "Add Merchant Failed", description: errorMessage, variant: "destructive" });
+        toast({ title: "Add Merchant Failed", description: errorMessage, variant: "destructive", duration: 9000 });
     }
     setIsLoading(false);
   };
   
-  const getStatusBadgeVariant = (status?: User['status']) => { // Made status optional for safety
+  const getStatusBadgeVariant = (status?: User['status']) => { 
     if (status === 'active') return 'default';
     if (status === 'pending_approval') return 'secondary';
     if (status === 'inactive') return 'destructive';
     return 'outline';
   };
   
-  const getRoleDisplayName = (role?: UserRole) => { // Made role optional
+  const getRoleDisplayName = (role?: UserRole) => { 
     if (!role) return 'N/A';
     switch(role) {
         case 'superadmin': return 'Super Admin';
@@ -333,7 +339,7 @@ export function UserManagementTable() {
             <AlertDialogDescription>
               Are you sure you want to {confirmAction?.actionType.replace('_', ' ')} the user 
               <span className="font-semibold"> {confirmAction?.user.name}</span>?
-              {confirmAction?.actionType === 'delete' && " This action will delete the user's data from the database but their authentication account might remain."}
+              {confirmAction?.actionType === 'delete' && " This action will delete the user's data from the database but their authentication account may still exist."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
