@@ -60,23 +60,31 @@ export function RegisterForm() {
 
       if (firebaseUser) {
         // Update Firebase Auth profile (optional but good practice)
+        // For superadmin, merchantName will be their display name
         await updateProfile(firebaseUser, { displayName: values.merchantName });
 
         // Create user document in Firestore
+        // TEMPORARY MODIFICATION FOR SUPERADMIN CREATION:
+        // The next registered user will become a superadmin.
+        // After creating your superadmin, please revert these settings:
+        // role: 'admin'
+        // status: 'pending_approval'
+        // merchantId: firebaseUser.uid
         const newUserDoc: User = {
           id: firebaseUser.uid,
-          name: values.merchantName,
+          name: values.merchantName, // Name for the superadmin
           email: values.email,
-          role: 'admin', // New registrations are merchant admins by default
-          status: 'pending_approval', // New merchants need approval
-          merchantId: firebaseUser.uid, // The admin's UID becomes their merchantId
+          role: 'superadmin', // TEMPORARY: Set role to superadmin
+          status: 'active',   // TEMPORARY: Set status to active
+          // merchantId is not typically set for a superadmin or can be null/undefined
+          // merchantId: firebaseUser.uid, // Original line for merchant admin
           createdAt: serverTimestamp(),
         };
         await setDoc(doc(db, "users", firebaseUser.uid), newUserDoc);
 
         toast({
-          title: "Registration Successful!",
-          description: "Your account has been created and is pending approval. Please check back later or contact superadmin.",
+          title: "Superadmin Account Creation!",
+          description: "Superadmin account created successfully. Please remember to revert the registration form changes.",
         });
         router.push("/login"); // Redirect to login page
       }
@@ -100,8 +108,9 @@ export function RegisterForm() {
   return (
     <>
       <div className="mb-6 text-center">
-        <h1 className="text-3xl font-headline font-bold text-foreground">Create Your Account</h1>
-        <p className="text-muted-foreground">Join Toko App and manage your business efficiently.</p>
+        {/* TEMPORARY: Indication for superadmin setup */}
+        <h1 className="text-3xl font-headline font-bold text-foreground">Create Superadmin Account</h1>
+        <p className="text-muted-foreground">Enter details for the initial superadmin.</p>
       </div>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
@@ -110,11 +119,13 @@ export function RegisterForm() {
             name="merchantName"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-foreground">Merchant Name / Your Name</FormLabel>
+                {/* Changed label for clarity during superadmin setup */}
+                <FormLabel className="text-foreground">Superadmin Name</FormLabel>
                 <div className="relative">
                   <UserIconStandard className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
                   <FormControl>
-                    <Input placeholder="Your Business or Full Name" {...field} className="pl-10" disabled={isLoading} />
+                    {/* Changed placeholder */}
+                    <Input placeholder="Superadmin Full Name" {...field} className="pl-10" disabled={isLoading} />
                   </FormControl>
                 </div>
                 <FormMessage />
@@ -130,7 +141,7 @@ export function RegisterForm() {
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
                   <FormControl>
-                    <Input type="email" placeholder="you@example.com" {...field} className="pl-10" disabled={isLoading} />
+                    <Input type="email" placeholder="superadmin@example.com" {...field} className="pl-10" disabled={isLoading} />
                   </FormControl>
                 </div>
                 <FormMessage />
@@ -170,7 +181,8 @@ export function RegisterForm() {
             )}
           />
           <Button type="submit" className="w-full font-headline" disabled={isLoading}>
-            {isLoading ? "Creating Account..." : "Create Account"}
+            {/* Changed button text */}
+            {isLoading ? "Creating Superadmin..." : "Create Superadmin Account"}
           </Button>
         </form>
       </Form>
