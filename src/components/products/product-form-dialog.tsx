@@ -1,3 +1,4 @@
+
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -33,7 +34,7 @@ import {
 } from "@/components/ui/select";
 import type { Product, Supplier } from "@/types";
 import { PlusCircle, Trash2, Package, Tag, Warehouse, Barcode, DollarSign, PackageSearch } from "lucide-react";
-import { useState, useEffect } from "react"; // Added useEffect
+import { useState, useEffect } from "react"; 
 import { db, serverTimestamp } from '@/lib/firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { useToast } from "@/hooks/use-toast";
@@ -55,8 +56,8 @@ const productFormSchema = z.object({
   units: z.array(unitSchema).min(1, "At least one unit is required.")
     .refine(units => {
         const baseUnits = units.filter(u => u.isBaseUnit).length;
-        if (units.length > 0 && baseUnits === 0) return false; // Must have a base unit if units exist
-        if (baseUnits > 1) return false; // Cannot have more than one base unit
+        if (units.length > 0 && baseUnits === 0) return false; 
+        if (baseUnits > 1) return false; 
         return true;
     }, {
         message: "Each product must have exactly one base unit (check 'Is Base Unit'). If only one unit, it's the base.",
@@ -92,11 +93,13 @@ const getCurrentUser = (): StoredUser | null => {
 interface ProductFormDialogProps {
   product?: Product;
   suppliers: Supplier[]; 
-  onSaveSuccess: () => void; // Changed from onSave
+  onSaveSuccess: () => void; 
   triggerButton?: React.ReactNode;
   isOpenProp?: boolean;
   onOpenChangeProp?: (open: boolean) => void;
 }
+
+const NO_SUPPLIER_VALUE = "_none_";
 
 export function ProductFormDialog({ 
     product, 
@@ -114,27 +117,26 @@ export function ProductFormDialog({
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
     defaultValues: product ? 
-      { ...product, units: product.units || [{ name: 'pcs', price: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }] } : 
+      { ...product, supplierId: product.supplierId || "", units: product.units || [{ name: 'pcs', price: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }] } : 
       {
         name: "",
+        supplierId: "",
         buyOwn: false,
         units: [{ name: '', price: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }],
       },
   });
 
-  const { fields, append, remove, update } = useFieldArray({ // Added update
+  const { fields, append, remove, update } = useFieldArray({ 
     control: form.control,
     name: "units",
   });
 
-  // Effect to sync dialog state
   useEffect(() => {
     if (isOpenProp !== undefined) {
       setIsDialogOpen(isOpenProp);
     }
   }, [isOpenProp]);
 
-  // Effect to reset form and manage base unit when dialog opens/product changes
   useEffect(() => {
     if (isDialogOpen) {
       const initialUnits = product?.units && product.units.length > 0 
@@ -143,13 +145,12 @@ export function ProductFormDialog({
       
       form.reset({
         name: product?.name || "",
-        supplierId: product?.supplierId || "",
+        supplierId: product?.supplierId || "", // Keep empty string for placeholder
         buyOwn: product?.buyOwn || false,
         barcode: product?.barcode || "",
         units: initialUnits,
       });
       
-      // Ensure at least one unit is marked as base if units exist
       if (initialUnits.length > 0 && !initialUnits.some(u => u.isBaseUnit)) {
         const updatedUnits = initialUnits.map((u, i) => i === 0 ? { ...u, isBaseUnit: true } : u);
         form.setValue('units', updatedUnits);
@@ -173,7 +174,7 @@ export function ProductFormDialog({
     });
   };
 
-  const onSubmit = async (data: ProductFormValues) => {
+  const onSubmit = async (formData: ProductFormValues) => {
     if (!currentUser || !currentUser.merchantId) {
       toast({ title: "Error", description: "Merchant information not found. Please re-login.", variant: "destructive" });
       setIsLoading(false);
@@ -181,33 +182,37 @@ export function ProductFormDialog({
     }
     setIsLoading(true);
 
-    // Ensure units always have conversionFactor, default to 1 if not set or if base unit
-    const processedUnits = data.units.map(unit => ({
+    const processedUnits = formData.units.map(unit => ({
         ...unit,
         conversionFactor: unit.isBaseUnit ? 1 : (unit.conversionFactor || 1),
     }));
 
-    const productData = {
-        ...data,
+    const productDataSubmit: Partial<ProductFormValues> & { merchantId: string, units: typeof processedUnits, supplierId?: string } = {
+        ...formData,
+        supplierId: formData.supplierId === NO_SUPPLIER_VALUE ? undefined : formData.supplierId,
         units: processedUnits,
         merchantId: currentUser.merchantId,
     };
+    
+    // Ensure optional fields are truly optional if empty string
+    if (productDataSubmit.barcode === "") productDataSubmit.barcode = undefined;
+
 
     try {
-      if (product) { // Editing existing product
+      if (product) { 
         const productRef = doc(db, "products", product.id);
         await updateDoc(productRef, {
-          ...productData,
+          ...productDataSubmit,
           updatedAt: serverTimestamp(),
         });
-        toast({ title: "Product Updated", description: `Product ${data.name} has been updated.` });
-      } else { // Adding new product
+        toast({ title: "Product Updated", description: `Product ${formData.name} has been updated.` });
+      } else { 
         await addDoc(collection(db, "products"), {
-          ...productData,
+          ...productDataSubmit,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-        toast({ title: "Product Added", description: `Product ${data.name} has been added.` });
+        toast({ title: "Product Added", description: `Product ${formData.name} has been added.` });
       }
       onSaveSuccess();
       handleOpenChange(false);
@@ -308,7 +313,7 @@ export function ProductFormDialog({
                            <Checkbox
                             checked={unitField.value}
                             onCheckedChange={(checked) => handleBaseUnitChange(index, !!checked)}
-                            disabled={fields.length === 1 && index === 0} // Disable if it's the only unit
+                            disabled={fields.length === 1 && index === 0} 
                           />
                         </FormControl>
                         <FormMessage />
@@ -347,7 +352,7 @@ export function ProductFormDialog({
                 render={({ field }) => (
                     <FormItem>
                     <FormLabel>Supplier (Optional)</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value} value={field.value || ""}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                         <FormControl>
                         <SelectTrigger>
                              <PackageSearch className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -355,7 +360,7 @@ export function ProductFormDialog({
                         </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="">None</SelectItem>
+                          <SelectItem value={NO_SUPPLIER_VALUE}>None</SelectItem>
                           {suppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
                         </SelectContent>
                     </Select>
@@ -413,3 +418,4 @@ export function ProductFormDialog({
     </Dialog>
   );
 }
+
