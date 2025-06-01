@@ -40,70 +40,104 @@ export default function SelectOutletPage() {
   const router = useRouter();
   const { toast } = useToast();
   const [availableOutlets, setAvailableOutlets] = useState<Outlet[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // Default to true
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
 
   useEffect(() => {
+    console.log('[SelectOutletPage] Initializing, attempting to get current user.');
     const user = getCurrentUser();
     setCurrentUser(user);
 
     if (user && user.role === 'superadmin') {
+      console.log('[SelectOutletPage] User is superadmin, redirecting to /admin/users.');
       router.push('/admin/users');
       return;
     }
     if (!user) {
-        // This case should ideally be caught by AppLayout, but as a fallback
+        console.log('[SelectOutletPage] No user found, redirecting to /login.');
         toast({title: "Session Expired", description: "Please log in again.", variant: "destructive"});
         router.push('/login');
+        setIsLoading(false); // Stop loading as we are redirecting
         return;
     }
      if (user.status === 'pending_approval' || user.status === 'inactive') {
+        console.log(`[SelectOutletPage] User status is ${user.status}, showing toast and stopping loading.`);
         toast({
             title: `Account ${user.status === 'pending_approval' ? 'Pending Approval' : 'Inactive'}`,
             description: `Your account is currently ${user.status}. Please contact support or wait for approval.`,
             variant: "destructive",
         });
-        // Consider logging out or redirecting to a specific info page
-        // For now, we'll prevent further action by not loading outlets
-        setIsLoading(false);
+        setIsLoading(false); // Stop loading as they can't proceed
         return;
     }
-
-
+    // If user is loaded, and not redirected, isLoading will be handled by the outlets fetching useEffect
   }, [router, toast]);
 
   const fetchOutlets = useCallback(async () => {
     if (!currentUser || !currentUser.merchantId || currentUser.status !== 'active') {
+      console.log('[SelectOutletPage] fetchOutlets: Pre-conditions not met (no currentUser, merchantId, or status not active). Bailing.', currentUser);
       setIsLoading(false);
       setAvailableOutlets([]);
       return;
     }
-    setIsLoading(true);
+
+    console.log(`[SelectOutletPage] fetchOutlets: Fetching for merchantId: ${currentUser.merchantId}`);
+    setIsLoading(true); // Explicitly set true when fetch starts
     try {
       const q = query(
-        collection(db, "outlets"), 
+        collection(db, "outlets"),
         where("merchantId", "==", currentUser.merchantId),
-        orderBy("name", "asc") // Order by name for consistent display
+        orderBy("name", "asc")
       );
       const querySnapshot = await getDocs(q);
       const fetchedOutlets: Outlet[] = [];
       querySnapshot.forEach((doc) => {
         fetchedOutlets.push({ id: doc.id, ...doc.data() } as Outlet);
       });
+      console.log('[SelectOutletPage] fetchOutlets: Fetched outlets:', fetchedOutlets);
       setAvailableOutlets(fetchedOutlets);
     } catch (error) {
       console.error("Error fetching outlets for selection: ", error);
       toast({ title: "Fetch Failed", description: "Could not load your outlets. Please try again.", variant: "destructive" });
       setAvailableOutlets([]);
+    } finally {
+        setIsLoading(false); // Ensure isLoading is set to false in all outcomes
     }
-    setIsLoading(false);
-  }, [currentUser, toast]);
+  }, [currentUser, toast]); // db, collection, query, where, orderBy, getDocs are stable
 
   useEffect(() => {
-    if (currentUser && currentUser.merchantId && currentUser.status === 'active') {
-      fetchOutlets();
+    console.log('[SelectOutletPage] Outlets fetch useEffect triggered. Current user:', currentUser);
+    if (currentUser) {
+      if (currentUser.merchantId && currentUser.status === 'active') {
+        console.log('[SelectOutletPage] User is active admin with merchantId. Calling fetchOutlets.');
+        fetchOutlets();
+      } else {
+        console.log('[SelectOutletPage] User loaded, but not eligible to fetch outlets (missing merchantId or inactive).', { merchantId: currentUser.merchantId, status: currentUser.status });
+        setIsLoading(false);
+        setAvailableOutlets([]);
+        if (currentUser.status && currentUser.status !== 'active') {
+          // Toast for pending/inactive is handled by the main useEffect
+        } else if (!currentUser.merchantId) {
+          toast({
+            title: "Account Configuration Issue",
+            description: "Your admin account is not properly associated with a merchant. Please contact support.",
+            variant: "destructive",
+            duration: 7000,
+          });
+        }
+      }
+    } else {
+      // currentUser is null, initial useEffect might still be running or redirecting.
+      // If not redirecting (e.g. user object malformed but not null),
+      // this path could lead to isLoading not being set to false.
+      // However, the initial useEffect should handle redirect if !user.
+      // If this else block is hit without a redirect, it implies a state issue.
+      console.log('[SelectOutletPage] CurrentUser is null in outlets fetch useEffect. This might be an intermediate state.');
+      // It's safer to set isLoading to false if currentUser is definitively null and not handled by other logic
+      // But usually, the first useEffect redirects if user is null.
+      // If it persists here, it implies user should have been redirected.
     }
-  }, [currentUser, fetchOutlets]);
+  }, [currentUser, fetchOutlets, toast]);
 
 
   const handleSelectOutlet = (outlet: Outlet) => {
@@ -114,6 +148,7 @@ export default function SelectOutletPage() {
     router.push('/dashboard');
   };
   
+  // This isLoading check is for the main page content
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.28))] p-4 md:p-8">
@@ -153,8 +188,8 @@ export default function SelectOutletPage() {
           ))}
           {availableOutlets.length === 0 && (
              <div className="text-center py-6 text-muted-foreground">
-                <p className="mb-2">No outlets available for selection.</p>
-                <p className="text-sm">You can add your first outlet from the management page.</p>
+                <p className="mb-2">No outlets available for your account.</p>
+                <p className="text-sm">If you are an admin, please ensure your account is correctly configured and outlets have been added for your merchant.</p>
              </div>
           )}
            <Button variant="ghost" asChild className="w-full mt-6 text-primary hover:text-primary/90 hover:bg-primary/10">
