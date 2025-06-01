@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react'; // Added useCallback
 import {
   Table,
   TableBody,
@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { MoreHorizontal, Edit3, Trash2, PlusCircle } from "lucide-react";
+import { MoreHorizontal, Edit3, Trash2, PlusCircle, Loader2 } from "lucide-react"; // Added Loader2
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,38 +32,77 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { db } from '@/lib/firebase'; // Import db
+import { collection, query, where, getDocs, doc, deleteDoc, orderBy } from 'firebase/firestore'; // Import Firestore functions
 
-// Mock data
-const mockSuppliersData: Supplier[] = [
-  { id: "sup_1", name: "Supplier Kopi Jaya", contactPerson: "Bapak Agus", phone: "081234567890", email: "agus@kopijaya.com", address: "Jl. Kopi No. 1, Jakarta", merchantId: "merch_1"},
-  { id: "sup_2", name: "Supplier Air Segar", contactPerson: "Ibu Siti", phone: "081198765432", email: "siti@airsegar.co.id", address: "Jl. Air Bersih No. 10, Bandung", merchantId: "merch_1"},
-  { id: "sup_3", name: "Toko Bahan Kue Makmur", contactPerson: "Pak Budi", phone: "085611223344", email: "info@makmurcake.com", address: "Jl. Raya Kue No. 88, Surabaya", merchantId: "merch_1"},
-];
+interface StoredUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role?: string;
+  merchantId?: string;
+}
+
+const getCurrentUser = (): StoredUser | null => {
+  if (typeof window !== 'undefined') {
+    const storedUserStr = localStorage.getItem('mockUser');
+    if (storedUserStr) {
+      try {
+        return JSON.parse(storedUserStr) as StoredUser;
+      } catch (e) {
+        console.error("Failed to parse user from localStorage in SuppliersTable", e);
+        return null;
+      }
+    }
+  }
+  return null;
+};
 
 export function SuppliersTable() {
-  const [suppliers, setSuppliers] = useState<Supplier[]>(mockSuppliersData);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | undefined>(undefined);
   const [isFormOpen, setIsFormOpen] = useState(false); 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [supplierToDelete, setSupplierToDelete] = useState<Supplier | null>(null);
   const { toast } = useToast();
+  const currentUser = getCurrentUser();
 
-  const handleSaveSupplier = async (data: Omit<Supplier, 'id' | 'merchantId'> & { id?: string }) => {
-     return new Promise<void>((resolve) => {
-        setTimeout(() => {
-            if (editingSupplier) {
-                setSuppliers(suppliers.map(s => s.id === editingSupplier.id ? { ...editingSupplier, ...data, id: editingSupplier.id, merchantId: 'merch_1' } : s));
-                toast({ title: "Supplier Updated", description: `${data.name} has been updated.` });
-            } else {
-                const newSupplier: Supplier = { ...data, id: `sup_${Date.now()}`, merchantId: 'merch_1' };
-                setSuppliers([newSupplier, ...suppliers]);
-                toast({ title: "Supplier Added", description: `${newSupplier.name} has been added.` });
-            }
-            setEditingSupplier(undefined);
-            setIsFormOpen(false); 
-            resolve();
-        }, 500);
-    });
+  const fetchSuppliers = useCallback(async () => {
+    if (!currentUser || !currentUser.merchantId) {
+      setIsLoading(false);
+      setSuppliers([]);
+      // Consider a toast or a message if user is not properly authenticated or lacks merchantId
+      // toast({ title: "Error", description: "Cannot load suppliers. User or merchant data missing.", variant: "destructive" });
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const q = query(
+        collection(db, "suppliers"), 
+        where("merchantId", "==", currentUser.merchantId),
+        orderBy("createdAt", "desc") 
+      );
+      const querySnapshot = await getDocs(q);
+      const fetchedSuppliers: Supplier[] = [];
+      querySnapshot.forEach((doc) => {
+        fetchedSuppliers.push({ id: doc.id, ...doc.data() } as Supplier);
+      });
+      setSuppliers(fetchedSuppliers);
+    } catch (error) {
+      console.error("Error fetching suppliers: ", error);
+      toast({ title: "Fetch Failed", description: "Could not fetch suppliers data.", variant: "destructive" });
+      setSuppliers([]);
+    }
+    setIsLoading(false);
+  }, [currentUser, toast]);
+
+  useEffect(() => {
+    fetchSuppliers();
+  }, [fetchSuppliers]);
+
+  const handleSaveSuccess = () => {
+    fetchSuppliers(); // Re-fetch suppliers after save
   };
 
   const openEditDialog = (supplier: Supplier) => {
@@ -81,23 +120,46 @@ export function SuppliersTable() {
     setShowDeleteConfirm(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (supplierToDelete) {
-      setSuppliers(suppliers.filter(s => s.id !== supplierToDelete.id));
-      toast({ title: "Supplier Deleted", description: `${supplierToDelete.name} has been deleted.`, variant: "destructive" });
+      try {
+        await deleteDoc(doc(db, "suppliers", supplierToDelete.id));
+        toast({ title: "Supplier Deleted", description: `Supplier ${supplierToDelete.name} has been deleted.`});
+        fetchSuppliers(); // Re-fetch after delete
+      } catch (error) {
+        console.error("Error deleting supplier: ", error);
+        toast({ title: "Delete Failed", description: "Could not delete supplier. Please try again.", variant: "destructive" });
+      }
     }
     setShowDeleteConfirm(false);
     setSupplierToDelete(null);
   };
 
+  if (!currentUser) {
+     return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Loading user data...</p>
+      </div>
+    );
+  }
+  
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Loading suppliers...</p>
+      </div>
+    );
+  }
+
+
   return (
     <>
       <div className="flex justify-end mb-4">
-        <SupplierFormDialog 
-            supplier={editingSupplier} 
-            onSave={handleSaveSupplier} 
-            triggerButton={<Button onClick={openNewDialog}><PlusCircle className="mr-2 h-4 w-4" /> Add Supplier</Button>}
-        />
+        <Button onClick={openNewDialog} disabled={!currentUser?.merchantId}>
+            <PlusCircle className="mr-2 h-4 w-4" /> Add Supplier
+        </Button>
       </div>
       <div className="rounded-lg border shadow-sm bg-card">
         <Table>
@@ -138,7 +200,7 @@ export function SuppliersTable() {
                 </TableCell>
               </TableRow>
             ))}
-            {suppliers.length === 0 && (
+            {suppliers.length === 0 && !isLoading && (
               <TableRow>
                 <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
                   No suppliers found. Start by adding a new supplier.
@@ -166,18 +228,14 @@ export function SuppliersTable() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {isFormOpen && !editingSupplier && ( // Only render for "Add New" if explicitly opened
+      
+      {isFormOpen && ( // Conditionally render the dialog
         <SupplierFormDialog
-            supplier={undefined} // Ensure it's for a new supplier
-            onSave={handleSaveSupplier}
-            triggerButton={<div style={{display: 'none'}} />} 
-        />
-      )}
-      {isFormOpen && editingSupplier && ( // Only render for "Edit" if explicitly opened
-         <SupplierFormDialog
             supplier={editingSupplier}
-            onSave={handleSaveSupplier}
-            triggerButton={<div style={{display: 'none'}} />}
+            onSaveSuccess={handleSaveSuccess}
+            isOpenProp={isFormOpen}
+            onOpenChangeProp={setIsFormOpen}
+            // No triggerButton here as it's controlled by isFormOpen state
         />
       )}
     </>

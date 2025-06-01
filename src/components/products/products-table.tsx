@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react'; // Added useCallback
 import {
   Table,
   TableBody,
@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MoreHorizontal, Edit3, Trash2, PlusCircle } from "lucide-react";
+import { MoreHorizontal, Edit3, Trash2, PlusCircle, Loader2 } from "lucide-react"; // Added Loader2
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,71 +33,107 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+} from "@/components/ui/alert-dialog";
+import { db } from '@/lib/firebase'; // Import db
+import { collection, query, where, getDocs, doc, deleteDoc, orderBy } from 'firebase/firestore'; // Import Firestore functions
 
-// Mock data
-const mockProducts: Product[] = [
-  {
-    id: "prod_1",
-    name: "Kopi Susu Gula Aren",
-    barcode: "8991234567890",
-    supplierId: "sup_1",
-    buyOwn: false,
-    units: [{ name: "pcs", price: 18000, stock: 50, isBaseUnit: true }],
-    merchantId: "merch_1",
-  },
-  {
-    id: "prod_2",
-    name: "Roti Coklat Keju",
-    units: [
-        { name: "pcs", price: 10000, stock: 100, isBaseUnit: true },
-        { name: "lusin", price: 110000, stock: 8, conversionFactor: 12 }
-    ],
-    merchantId: "merch_1",
-  },
-  {
-    id: "prod_3",
-    name: "Air Mineral Botol",
-    barcode: "8990000111222",
-    supplierId: "sup_2",
-    units: [
-        { name: "botol", price: 5000, stock: 200, isBaseUnit: true },
-        { name: "dus", price: 90000, stock: 15, conversionFactor: 24 }
-    ],
-    merchantId: "merch_1",
-  },
-];
+interface StoredUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role?: string;
+  merchantId?: string;
+}
 
-const mockSuppliers: Supplier[] = [
-    { id: "sup_1", name: "Supplier Kopi Jaya", merchantId: "merch_1"},
-    { id: "sup_2", name: "Supplier Air Segar", merchantId: "merch_1"},
-];
-
+const getCurrentUser = (): StoredUser | null => {
+  if (typeof window !== 'undefined') {
+    const storedUserStr = localStorage.getItem('mockUser');
+    if (storedUserStr) {
+      try {
+        return JSON.parse(storedUserStr) as StoredUser;
+      } catch (e) {
+        console.error("Failed to parse user from localStorage in ProductsTable", e);
+        return null;
+      }
+    }
+  }
+  return null;
+};
 
 export function ProductsTable() {
-  const [products, setProducts] = useState<Product[]>(mockProducts);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [allSuppliers, setAllSuppliers] = useState<Supplier[]>([]); // State for suppliers
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(true);
   const [editingProduct, setEditingProduct] = useState<Product | undefined>(undefined);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const { toast } = useToast();
+  const currentUser = getCurrentUser();
 
-  const handleSaveProduct = async (data: Omit<Product, 'id' | 'merchantId'> & { id?: string }) => {
-    return new Promise<void>((resolve) => {
-        setTimeout(() => {
-            if (editingProduct) {
-                setProducts(products.map(p => p.id === editingProduct.id ? { ...editingProduct, ...data, id: editingProduct.id, merchantId: 'merch_1' } : p));
-                toast({ title: "Product Updated", description: `${data.name} has been updated.`});
-            } else {
-                const newProduct: Product = { ...data, id: `prod_${Date.now()}`, merchantId: 'merch_1' };
-                setProducts([newProduct, ...products]);
-                toast({ title: "Product Added", description: `${newProduct.name} has been added.`});
-            }
-            setEditingProduct(undefined);
-            setIsFormOpen(false); 
-            resolve();
-        }, 500);
-    });
+  const fetchProducts = useCallback(async () => {
+    if (!currentUser || !currentUser.merchantId) {
+      setIsLoadingProducts(false);
+      setProducts([]);
+      return;
+    }
+    setIsLoadingProducts(true);
+    try {
+      const q = query(
+        collection(db, "products"), 
+        where("merchantId", "==", currentUser.merchantId),
+        orderBy("createdAt", "desc")
+      );
+      const querySnapshot = await getDocs(q);
+      const fetchedProducts: Product[] = [];
+      querySnapshot.forEach((doc) => {
+        fetchedProducts.push({ id: doc.id, ...doc.data() } as Product);
+      });
+      setProducts(fetchedProducts);
+    } catch (error) {
+      console.error("Error fetching products: ", error);
+      toast({ title: "Product Fetch Failed", description: "Could not fetch products data.", variant: "destructive" });
+      setProducts([]);
+    }
+    setIsLoadingProducts(false);
+  }, [currentUser, toast]);
+
+  const fetchAllSuppliers = useCallback(async () => {
+    if (!currentUser || !currentUser.merchantId) {
+      setIsLoadingSuppliers(false);
+      setAllSuppliers([]);
+      return;
+    }
+    setIsLoadingSuppliers(true);
+    try {
+      const q = query(
+        collection(db, "suppliers"),
+        where("merchantId", "==", currentUser.merchantId),
+        orderBy("name", "asc") // Order by name for dropdown
+      );
+      const querySnapshot = await getDocs(q);
+      const fetchedSuppliers: Supplier[] = [];
+      querySnapshot.forEach((doc) => {
+        fetchedSuppliers.push({ id: doc.id, ...doc.data() } as Supplier);
+      });
+      setAllSuppliers(fetchedSuppliers);
+    } catch (error) {
+      console.error("Error fetching suppliers for product form: ", error);
+      // Not toasting here as it might be too noisy if products load fine
+      setAllSuppliers([]);
+    }
+    setIsLoadingSuppliers(false);
+  }, [currentUser]);
+
+
+  useEffect(() => {
+    fetchProducts();
+    fetchAllSuppliers(); // Fetch suppliers when component mounts or user changes
+  }, [fetchProducts, fetchAllSuppliers]);
+
+  const handleSaveSuccess = () => {
+    fetchProducts(); // Re-fetch products after save
   };
 
   const openEditDialog = (product: Product) => {
@@ -115,25 +151,48 @@ export function ProductsTable() {
     setShowDeleteConfirm(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (productToDelete) {
-      setProducts(products.filter(p => p.id !== productToDelete.id));
-      toast({ title: "Product Deleted", description: `${productToDelete.name} has been deleted.`, variant: "destructive" });
+      try {
+        await deleteDoc(doc(db, "products", productToDelete.id));
+        toast({ title: "Product Deleted", description: `${productToDelete.name} has been deleted.`, variant: "destructive" });
+        fetchProducts(); 
+      } catch (error) {
+        console.error("Error deleting product: ", error);
+        toast({ title: "Delete Failed", description: "Could not delete product. Please try again.", variant: "destructive" });
+      }
     }
     setShowDeleteConfirm(false);
     setProductToDelete(null);
   };
+  
+  const isLoading = isLoadingProducts || isLoadingSuppliers;
 
+
+  if (!currentUser) {
+     return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Loading user data...</p>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Loading products and suppliers...</p>
+      </div>
+    );
+  }
 
   return (
     <>
       <div className="flex justify-end mb-4">
-         <ProductFormDialog
-            product={editingProduct}
-            suppliers={mockSuppliers}
-            onSave={handleSaveProduct}
-            triggerButton={<Button onClick={openNewDialog}><PlusCircle className="mr-2 h-4 w-4" /> Add Product</Button>}
-          />
+         <Button onClick={openNewDialog} disabled={!currentUser?.merchantId || isLoadingSuppliers}>
+            <PlusCircle className="mr-2 h-4 w-4" /> Add Product
+        </Button>
       </div>
       <div className="rounded-lg border shadow-sm bg-card">
         <Table>
@@ -153,12 +212,12 @@ export function ProductsTable() {
                 <TableCell>
                     {product.units.map(unit => (
                         <Badge key={unit.name} variant="outline" className="mr-1 mb-1">
-                            {unit.name}: {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(unit.price)} (Stock: {unit.stock})
+                            {unit.name}: {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(unit.price)} (Stock: {unit.stock})
                         </Badge>
                     ))}
                 </TableCell>
                 <TableCell>
-                  {product.supplierId ? mockSuppliers.find(s => s.id === product.supplierId)?.name : (product.buyOwn ? 'Beli Sendiri' : 'N/A')}
+                  {product.supplierId ? (allSuppliers.find(s => s.id === product.supplierId)?.name || product.supplierId) : (product.buyOwn ? 'Beli Sendiri' : 'N/A')}
                 </TableCell>
                 <TableCell>{product.barcode || 'N/A'}</TableCell>
                 <TableCell className="text-right">
@@ -182,7 +241,7 @@ export function ProductsTable() {
                 </TableCell>
               </TableRow>
             ))}
-            {products.length === 0 && (
+            {products.length === 0 && !isLoadingProducts && (
               <TableRow>
                 <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
                   No products found. Start by adding a new product.
@@ -210,15 +269,15 @@ export function ProductsTable() {
         </AlertDialogContent>
       </AlertDialog>
       
-      {isFormOpen && ( // Conditionally render the dialog if controlled by state
+      {isFormOpen && (
         <ProductFormDialog
             product={editingProduct}
-            suppliers={mockSuppliers}
-            onSave={handleSaveProduct}
-            triggerButton={<div style={{display: 'none'}} />} // This instance's trigger is not visible; dialog is controlled by isFormOpen
+            suppliers={allSuppliers} // Pass fetched suppliers
+            onSaveSuccess={handleSaveSuccess}
+            isOpenProp={isFormOpen}
+            onOpenChangeProp={setIsFormOpen}
         />
       )}
     </>
   );
 }
-
