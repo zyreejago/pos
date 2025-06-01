@@ -16,6 +16,7 @@ import {
   LogOut,
   Settings as SettingsIcon,
   LifeBuoy,
+  Store, // Added Store icon
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetTrigger, SheetContent } from "@/components/ui/sheet"; // Ensure SheetContent and SheetTrigger are imported
 import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import {
   Select,
@@ -38,11 +39,9 @@ import {
 } from "@/components/ui/select";
 import Image from 'next/image';
 import React, { useEffect, useState } from 'react';
-// Firebase imports removed
-// import { auth } from '@/lib/firebase';
-// import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation'; // Added usePathname
 import { useToast } from '@/hooks/use-toast';
+import type { Outlet } from '@/types'; // Import Outlet type
 
 // Mock user type
 interface MockUser {
@@ -51,10 +50,21 @@ interface MockUser {
   role?: string;
 }
 
+// Consistent mock outlets
+const mockAppOutlets: Outlet[] = [
+  { id: "outlet_1", name: "Main Outlet", address: "Jl. Sudirman No. 123, Jakarta Pusat", merchantId: "merch_1" },
+  { id: "outlet_2", name: "Branch Kemang", address: "Jl. Kemang Raya No. 45, Jakarta Selatan", merchantId: "merch_1" },
+  { id: "outlet_3", name: "Warehouse Cilandak", address: "Jl. TB Simatupang Kav. 6, Jakarta Selatan", merchantId: "merch_1" },
+  { id: "outlet_4", name: "Toko App Bandung", address: "Jl. Asia Afrika No. 1, Bandung", merchantId: "merch_2" },
+];
+
+
 export function AppHeader() {
   const { isMobile } = useSidebar();
   const [currentUser, setCurrentUser] = useState<MockUser | null>(null);
+  const [selectedOutletId, setSelectedOutletId] = useState<string | null>(null);
   const router = useRouter();
+  const pathname = usePathname();
   const { toast } = useToast();
 
   useEffect(() => {
@@ -66,33 +76,45 @@ export function AppHeader() {
           setCurrentUser(JSON.parse(storedUser));
         } catch (e) {
           console.error("Failed to parse mock user from localStorage", e);
-          localStorage.removeItem('mockUser'); // Clear invalid data
+          localStorage.removeItem('mockUser'); 
         }
       }
+      // Get selected outlet
+      const storedOutletId = localStorage.getItem('selectedOutletId');
+      setSelectedOutletId(storedOutletId);
     }
-  }, [router]); // Re-check on route change for SPA-like updates
+  }, [router, pathname]); // Re-check on route change
 
   const handleLogout = async () => {
-    // Simulate logout
     if (typeof window !== 'undefined') {
       localStorage.removeItem('mockUser');
+      localStorage.removeItem('selectedOutletId');
+      localStorage.removeItem('selectedOutletName');
     }
     setCurrentUser(null);
+    setSelectedOutletId(null);
     toast({
       title: "Logged Out (Mock)",
       description: "You have been successfully logged out.",
     });
     router.push('/login');
   };
+  
+  const handleOutletChange = (outletId: string) => {
+    const selectedOutlet = mockAppOutlets.find(o => o.id === outletId);
+    if (selectedOutlet && typeof window !== 'undefined') {
+      localStorage.setItem('selectedOutletId', selectedOutlet.id);
+      localStorage.setItem('selectedOutletName', selectedOutlet.name);
+      setSelectedOutletId(selectedOutlet.id);
+      toast({
+        title: "Outlet Changed",
+        description: `Switched to ${selectedOutlet.name}.`,
+      });
+      router.push('/dashboard'); // Navigate to dashboard to apply new outlet context
+    }
+  };
 
-  // Placeholder data for outlet selection - this should be dynamic later
-  const outlets = [
-    { id: "1", name: "Main Outlet" },
-    { id: "2", name: "Branch A" },
-    { id: "3", name: "Warehouse" },
-  ];
-  const currentOutlet = outlets[0];
-
+  const showOutletSelector = currentUser && currentUser.role !== 'superadmin' && pathname !== '/select-outlet';
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-card px-4 md:px-6 shadow-sm">
@@ -108,23 +130,32 @@ export function AppHeader() {
       )}
       
       <div className="flex w-full items-center gap-4 md:ml-auto md:gap-2 lg:gap-4">
-        <div className="ml-auto flex-1 sm:flex-initial">
-           <Select defaultValue={currentOutlet.id}>
-            <SelectTrigger className="w-full md:w-[200px] lg:w-[280px] bg-background shadow-inner">
-              <div className="flex items-center gap-2">
-                <Building className="h-4 w-4 text-muted-foreground" />
-                <SelectValue placeholder="Select Outlet" />
-              </div>
-            </SelectTrigger>
-            <SelectContent>
-              {outlets.map((outlet) => (
-                <SelectItem key={outlet.id} value={outlet.id}>
-                  {outlet.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {showOutletSelector && selectedOutletId && (
+          <div className="ml-auto flex-1 sm:flex-initial">
+            <Select value={selectedOutletId} onValueChange={handleOutletChange}>
+              <SelectTrigger className="w-full md:w-[200px] lg:w-[280px] bg-background shadow-inner">
+                <div className="flex items-center gap-2">
+                  <Store className="h-4 w-4 text-muted-foreground" /> {/* Changed icon to Store */}
+                  <SelectValue placeholder="Select Outlet" />
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                {mockAppOutlets.map((outlet) => ( // Using mockAppOutlets
+                  <SelectItem key={outlet.id} value={outlet.id}>
+                    {outlet.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        {/* If no outlet selected and should be shown, perhaps a message or disabled selector */}
+        {showOutletSelector && !selectedOutletId && (
+           <div className="ml-auto flex-1 sm:flex-initial text-sm text-muted-foreground">
+             Please select an outlet.
+           </div>
+        )}
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="rounded-full">
@@ -146,22 +177,30 @@ export function AppHeader() {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
+                {currentUser.role !== 'superadmin' && (
+                  <DropdownMenuItem asChild>
+                    <Link href="/select-outlet" className="flex items-center gap-2 cursor-pointer">
+                      <Building className="h-4 w-4" />
+                      <span>Change Outlet</span>
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+                {/* <DropdownMenuItem asChild>
                   <Link href="/dashboard/profile" className="flex items-center gap-2 cursor-pointer">
                     <CircleUser className="h-4 w-4" />
                     <span>Profile</span>
                   </Link>
-                </DropdownMenuItem>
+                </DropdownMenuItem> */}
                 <DropdownMenuItem asChild>
                    <Link href="/settings" className="flex items-center gap-2 cursor-pointer">
                     <SettingsIcon className="h-4 w-4" />
                     <span>Settings</span>
                   </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer">
+                {/* <DropdownMenuItem className="flex items-center gap-2 cursor-pointer">
                   <LifeBuoy className="h-4 w-4" />
                   <span>Support</span>
-                </DropdownMenuItem>
+                </DropdownMenuItem> */}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout} className="flex items-center gap-2 cursor-pointer text-red-600 hover:!text-red-600 focus:text-red-600 dark:text-red-500 dark:hover:!text-red-500 dark:focus:text-red-500">
                   <LogOut className="h-4 w-4"/>

@@ -51,18 +51,18 @@ export function LoginForm() {
     if (values.email === "test@example.com" && values.password === "password") {
       toast({
         title: "Login Successful! (Mock)",
-        description: "Welcome back!",
+        description: "Welcome back! Please select your outlet.",
       });
       // Store mock user in localStorage for app-header to pick up
-      localStorage.setItem('mockUser', JSON.stringify({ email: values.email, displayName: 'Test User' }));
-      router.push("/dashboard");
+      localStorage.setItem('mockUser', JSON.stringify({ email: values.email, displayName: 'Test User', role: 'admin' })); // Assuming test user is admin
+      router.push("/select-outlet"); // Redirect to outlet selection
     } else if (values.email === "super@tokoapp.com" && values.password === "password"){
        toast({
         title: "Login Successful! (Mock Superadmin)",
         description: "Welcome Super Admin!",
       });
       localStorage.setItem('mockUser', JSON.stringify({ email: values.email, displayName: 'Super Admin', role: 'superadmin' }));
-      router.push("/admin/users");
+      router.push("/admin/users"); // Superadmin goes directly to user management
     }
     
     else {
