@@ -35,8 +35,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { MerchantFormDialog } from './merchant-form-dialog';
 import { auth, db, serverTimestamp } from '@/lib/firebase'; 
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth'; // Removed deleteAuthUser as it's not used
-import { collection, doc, setDoc, getDocs, updateDoc, deleteDoc, query, orderBy } from 'firebase/firestore'; // Removed writeBatch as it's not used
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { collection, doc, setDoc, getDocs, updateDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 
 export function UserManagementTable() {
   const [users, setUsers] = useState<User[]>([]);
@@ -63,7 +63,7 @@ export function UserManagementTable() {
       const clientAuthUID = currentAuthUser ? currentAuthUser.uid : 'No User Logged In (Client)';
       toast({ 
         title: "Fetch Failed", 
-        description: `Could not load user data (Client UID: ${clientAuthUID}): ${error.message || 'Unknown error'}. Check Firestore rules.`, 
+        description: `Could not load user data (Client UID: ${clientAuthUID}): ${error.message || 'Unknown error'}. Check Firestore rules or user data.`, 
         variant: "destructive" 
       });
     }
@@ -111,6 +111,8 @@ export function UserManagementTable() {
               break;
           case 'delete':
               await deleteDoc(userDocRef);
+              // Consider also deleting user from Firebase Auth here if needed,
+              // but that requires backend function or careful client-side handling.
               toastMessage = `User ${user.name}'s data has been deleted from the database. Their authentication account may still exist.`;
               toast({ title: "User Data Deleted", description: toastMessage, variant: "destructive" });
               fetchUsers(); 
@@ -142,8 +144,7 @@ export function UserManagementTable() {
         toast({ title: "Error", description: "Password is required to create a new merchant admin.", variant: "destructive" });
         return;
     }
-    setIsLoading(true);
-    let firebaseUserUID: string | null = null; 
+    
     const loggedInSuperAdmin = auth.currentUser;
 
     if (!loggedInSuperAdmin) {
@@ -152,11 +153,15 @@ export function UserManagementTable() {
         return;
     }
     
+    // Debugging Toast: Shows the UID of the currently logged-in superadmin
     toast({
       title: "Debug Info: Attempting Add Merchant",
-      description: `Logged in Superadmin UID (Client): ${loggedInSuperAdmin.uid}. Adding merchant: ${data.email}`,
+      description: `Logged in Superadmin UID (Client): ${loggedInSuperAdmin.uid}. Adding merchant admin: ${data.email}`,
       duration: 9000, 
     });
+
+    setIsLoading(true);
+    let firebaseUserUID: string | null = null; 
 
     try {
         const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
@@ -167,18 +172,18 @@ export function UserManagementTable() {
             await updateProfile(firebaseUser, { displayName: data.name });
 
             const newUserDoc: User = {
-                id: firebaseUser.uid,
+                id: firebaseUser.uid, // UID of the new merchant admin
                 name: data.name,
                 email: data.email,
                 role: 'admin', 
-                status: 'active', // New merchants created by superadmin are active by default
-                merchantId: firebaseUser.uid, // The new admin's UID becomes their merchantId
+                status: 'active', 
+                merchantId: loggedInSuperAdmin.uid, // UID of the SUPERADMIN creating this user
                 createdAt: serverTimestamp(),
             };
             
             await setDoc(doc(db, "users", firebaseUser.uid), newUserDoc);
 
-            toast({ title: "Merchant Added", description: `Merchant ${data.name} with admin ${data.email} has been created and activated.` });
+            toast({ title: "Merchant Added", description: `Merchant ${data.name} with admin ${data.email} has been created and activated. Merchant ID set to superadmin's UID.` });
             setIsMerchantFormOpen(false);
             fetchUsers();
         }
@@ -295,7 +300,6 @@ export function UserManagementTable() {
                           <CheckCircle className="mr-2 h-4 w-4" /> Approve Merchant
                         </DropdownMenuItem>
                       )}
-                      {/* Superadmin should be able to trigger password change for admins, Kasir password handled by their admin */}
                       { (user.role === 'admin' || user.role === 'superadmin') && (
                         <DropdownMenuItem onClick={() => handleChangePassword(user)}>
                           <KeyRound className="mr-2 h-4 w-4" /> Change Password
@@ -363,3 +367,5 @@ export function UserManagementTable() {
     </>
   );
 }
+
+    
