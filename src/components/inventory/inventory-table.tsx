@@ -49,9 +49,9 @@ const mockProductsData: Product[] = [
     ],
     merchantId: "merch_1",
   },
-   { id: 'prod_4', name: 'Teh Manis Hangat', units: [{name: 'pcs', price: 8000, stock: 70}], merchantId: 'merch_1' },
-   { id: 'prod_5', name: 'Nasi Goreng Spesial', units: [{name: 'pcs', price: 25000, stock: 30}], merchantId: 'merch_1' },
-   { id: 'prod_6', name: 'Kentang Goreng', units: [{name: 'pcs', price: 15000, stock: 60}], merchantId: 'merch_1' },
+   { id: 'prod_4', name: 'Teh Manis Hangat', units: [{name: 'pcs', price: 8000, stock: 70, isBaseUnit: true}], merchantId: 'merch_1' },
+   { id: 'prod_5', name: 'Nasi Goreng Spesial', units: [{name: 'pcs', price: 25000, stock: 30, isBaseUnit: true}], merchantId: 'merch_1' },
+   { id: 'prod_6', name: 'Kentang Goreng', units: [{name: 'pcs', price: 15000, stock: 60, isBaseUnit: true}], merchantId: 'merch_1' },
 ];
 
 
@@ -60,32 +60,10 @@ export function InventoryTable() {
   const [adjustingProductUnit, setAdjustingProductUnit] = useState<{productId: string, unitName: string} | null>(null);
   const { toast } = useToast();
 
-  // In a real scenario, products would be fetched or come from a shared state/localStorage
-  // useEffect(() => {
-  //   // Fetch products or load from localStorage
-  // }, []);
-
   const handleOpenAdjustmentDialog = (productId: string, unitName: string) => {
     setAdjustingProductUnit({ productId, unitName });
-    // Here you would open a dialog, e.g., setIsStockAdjustmentDialogOpen(true);
     toast({ title: "Info", description: `Fitur penyesuaian stok untuk ${unitName} produk ${productId} belum diimplementasikan.`})
   };
-  
-  // const handleStockAdjustment = (productId: string, unitName: string, newStock: number, reason: string) => {
-  //   // Logic to update stock
-  //   // This would also update localStorage if that was the source of truth
-  //   setProducts(prevProducts => prevProducts.map(p => {
-  //     if (p.id === productId) {
-  //       return {
-  //         ...p,
-  //         units: p.units.map(u => u.name === unitName ? { ...u, stock: newStock } : u)
-  //       };
-  //     }
-  //     return p;
-  //   }));
-  //   toast({title: "Stok Diperbarui", description: `Stok untuk ${unitName} produk ${productId} telah diubah.`});
-  //   setAdjustingProductUnit(null);
-  // };
 
   return (
     <>
@@ -100,11 +78,34 @@ export function InventoryTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {products.map((product) =>
-              product.units.map((unit, unitIndex) => (
+            {products.map((product) => {
+              // Determine which units to display based on user's preference
+              const hasSpecialDerivedUnit = product.units.some(u =>
+                !u.isBaseUnit && u.conversionFactor && ['dus', 'lusin'].includes(u.name.toLowerCase())
+              );
+
+              const unitsToDisplay = product.units.filter(unit => {
+                if (unit.isBaseUnit && hasSpecialDerivedUnit) {
+                  return false; // Hide base unit if a special derived unit (dus/lusin) exists for this product
+                }
+                return true; // Otherwise, show the unit
+              });
+
+              if (unitsToDisplay.length === 0 && product.units.length > 0) {
+                // Fallback: if filtering hid all units (e.g. only base unit existed with a special derived one, which is unusual), show original non-base units or all if only base.
+                // This case should ideally not happen if data is structured well, but as a safeguard:
+                const nonBaseUnits = product.units.filter(u => !u.isBaseUnit && u.conversionFactor);
+                if (nonBaseUnits.length > 0) {
+                    unitsToDisplay.push(...nonBaseUnits);
+                } else {
+                    unitsToDisplay.push(...product.units); // Show all if no clear non-base units to prioritize
+                }
+              }
+              
+              return unitsToDisplay.map((unit, displayUnitIndex) => (
                 <TableRow key={`${product.id}-${unit.name}`}>
-                  {unitIndex === 0 ? (
-                    <TableCell rowSpan={product.units.length} className="font-medium align-top py-3">
+                  {displayUnitIndex === 0 ? (
+                    <TableCell rowSpan={unitsToDisplay.length} className="font-medium align-top py-3">
                       {product.name}
                     </TableCell>
                   ) : null}
@@ -120,8 +121,8 @@ export function InventoryTable() {
                     </Button>
                   </TableCell>
                 </TableRow>
-              ))
-            )}
+              ));
+            })}
             {products.length === 0 && (
               <TableRow>
                 <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
