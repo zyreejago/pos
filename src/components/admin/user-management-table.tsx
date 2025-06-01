@@ -35,8 +35,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { MerchantFormDialog } from './merchant-form-dialog';
 import { auth, db, serverTimestamp } from '@/lib/firebase'; 
-import { createUserWithEmailAndPassword, updateProfile, deleteUser as deleteAuthUser } from 'firebase/auth';
-import { collection, doc, setDoc, getDocs, updateDoc, deleteDoc, query, orderBy, writeBatch } from 'firebase/firestore';
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth'; // Removed deleteAuthUser as it's not used
+import { collection, doc, setDoc, getDocs, updateDoc, deleteDoc, query, orderBy } from 'firebase/firestore'; // Removed writeBatch as it's not used
 
 export function UserManagementTable() {
   const [users, setUsers] = useState<User[]>([]);
@@ -59,9 +59,11 @@ export function UserManagementTable() {
       setUsers(fetchedUsers);
     } catch (error: any) {
       console.error("Error fetching users: ", error);
+      const currentAuthUser = auth.currentUser;
+      const clientAuthUID = currentAuthUser ? currentAuthUser.uid : 'No User Logged In (Client)';
       toast({ 
         title: "Fetch Failed", 
-        description: `Could not load user data: ${error.message || 'Unknown error'}. Check Firestore rules.`, 
+        description: `Could not load user data (Client UID: ${clientAuthUID}): ${error.message || 'Unknown error'}. Check Firestore rules.`, 
         variant: "destructive" 
       });
     }
@@ -150,11 +152,10 @@ export function UserManagementTable() {
         return;
     }
     
-    // DIAGNOSTIC TOAST
     toast({
       title: "Debug Info: Attempting Add Merchant",
-      description: `Logged in Superadmin UID: ${loggedInSuperAdmin.uid}. Adding merchant: ${data.email}`,
-      duration: 9000, // Longer duration for debug
+      description: `Logged in Superadmin UID (Client): ${loggedInSuperAdmin.uid}. Adding merchant: ${data.email}`,
+      duration: 9000, 
     });
 
     try {
@@ -170,12 +171,11 @@ export function UserManagementTable() {
                 name: data.name,
                 email: data.email,
                 role: 'admin', 
-                status: 'active', 
-                merchantId: firebaseUser.uid, 
+                status: 'active', // New merchants created by superadmin are active by default
+                merchantId: firebaseUser.uid, // The new admin's UID becomes their merchantId
                 createdAt: serverTimestamp(),
             };
             
-            // Attempt to write to Firestore
             await setDoc(doc(db, "users", firebaseUser.uid), newUserDoc);
 
             toast({ title: "Merchant Added", description: `Merchant ${data.name} with admin ${data.email} has been created and activated.` });
@@ -185,11 +185,11 @@ export function UserManagementTable() {
     } catch (error: any) {
         console.error("Error adding new merchant: ", error);
         let errorMessage = "An unexpected error occurred. Please try again.";
+        const clientAuthUID = loggedInSuperAdmin ? loggedInSuperAdmin.uid : 'Unknown (Client)';
 
-        if (error.name === 'FirebaseError' || error.constructor.name === 'FirebaseError') { // Broader check for FirebaseError
-            // Check if it's a Firestore permission error specifically
+        if (error.name === 'FirebaseError' || error.constructor.name === 'FirebaseError') { 
             if (error.message && error.message.toLowerCase().includes('permission-denied') && error.message.toLowerCase().includes('firestore')) {
-                 errorMessage = `Failed to save merchant data to Firestore: Permission denied. Please check Firestore rules and superadmin data. Auth user ${data.email} was created but Firestore data failed. Manual cleanup of auth user may be needed.`;
+                 errorMessage = `Failed to save merchant data to Firestore: Permission denied. Please check Firestore rules and superadmin data (Client UID: ${clientAuthUID}). Auth user ${data.email} was created but Firestore data failed. Manual cleanup of auth user may be needed.`;
             } else {
                  switch (error.code) {
                     case 'auth/email-already-in-use':
@@ -200,20 +200,20 @@ export function UserManagementTable() {
                         break;
                     default:
                         if (error.message && error.message.toLowerCase().includes('firestore')) {
-                            errorMessage = `Firestore error: ${error.message}. Check rules and data.`;
+                            errorMessage = `Firestore error (Client UID: ${clientAuthUID}): ${error.message}. Check rules and data.`;
                              if (firebaseUserUID) {
                                 errorMessage += ` Auth user ${data.email} was created. Manual cleanup may be needed.`;
                             }
                         } else if (error.message && error.message.toLowerCase().includes('auth')) {
                             errorMessage = `Authentication error: ${error.message}`;
                         } else {
-                            errorMessage = `Failed to add merchant: ${error.message || 'Unknown error'}`;
+                            errorMessage = `Failed to add merchant (Client UID: ${clientAuthUID}): ${error.message || 'Unknown error'}`;
                         }
                         break;
                 }
             }
         } else {
-             errorMessage = `Failed to add merchant: ${error.toString()}`;
+             errorMessage = `Failed to add merchant (Client UID: ${clientAuthUID}): ${error.toString()}`;
         }
         
         toast({ title: "Add Merchant Failed", description: errorMessage, variant: "destructive", duration: 9000 });
@@ -295,9 +295,10 @@ export function UserManagementTable() {
                           <CheckCircle className="mr-2 h-4 w-4" /> Approve Merchant
                         </DropdownMenuItem>
                       )}
-                      {(user.role === 'admin' || user.role === 'superadmin') && (
+                      {/* Superadmin should be able to trigger password change for admins, Kasir password handled by their admin */}
+                      { (user.role === 'admin' || user.role === 'superadmin') && (
                         <DropdownMenuItem onClick={() => handleChangePassword(user)}>
-                          <KeyRound className="mr-2 h-4 w-4" /> Change Password (Admin)
+                          <KeyRound className="mr-2 h-4 w-4" /> Change Password
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuSeparator />
