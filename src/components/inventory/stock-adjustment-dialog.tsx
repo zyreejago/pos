@@ -28,7 +28,7 @@ import { Warehouse, Edit, Loader2 } from 'lucide-react';
 
 const stockAdjustmentFormSchema = z.object({
   newStock: z.coerce.number().min(0, { message: "Stock must be a non-negative number." }),
-  reason: z.string().min(3, { message: "Reason must be at least 3 characters." }).optional(),
+  reason: z.string().optional(), // Made reason truly optional
 });
 
 type StockAdjustmentFormValues = z.infer<typeof stockAdjustmentFormSchema>;
