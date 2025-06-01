@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from 'react';
@@ -169,14 +170,14 @@ export function SuppliersTable() {
         <SupplierFormDialog
             supplier={undefined} // Ensure it's for a new supplier
             onSave={handleSaveSupplier}
-            triggerButton={<></>} 
+            triggerButton={<div style={{display: 'none'}} />} 
         />
       )}
       {isFormOpen && editingSupplier && ( // Only render for "Edit" if explicitly opened
          <SupplierFormDialog
             supplier={editingSupplier}
             onSave={handleSaveSupplier}
-            triggerButton={<></>}
+            triggerButton={<div style={{display: 'none'}} />}
         />
       )}
     </>
