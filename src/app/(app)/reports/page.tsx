@@ -102,7 +102,7 @@ export default function ReportsPage() {
     if (isLoading) return;
     const dataToExport = filteredTransactions.map(t => ({
       ID: t.id,
-      Date: format(t.timestamp, "yyyy-MM-dd HH:mm"), // Corrected format call
+      Date: format(t.timestamp, "yyyy-MM-dd HH:mm"), 
       Outlet: mockOutlets.find(o => o.id === t.outletId)?.name || 'N/A',
       Kasir: mockKasirs.find(k => k.id === t.kasirId)?.name || 'N/A',
       'Payment Method': t.paymentMethod,
@@ -257,26 +257,26 @@ export default function ReportsPage() {
               <TableBody>
                 {filteredTransactions.length > 0 ? (
                   filteredTransactions.map((transaction) => (
-                    <TableRow key={transaction.id}>
-                      <TableCell>{format(transaction.timestamp, "dd MMM yyyy, HH:mm")}</TableCell> {/* Corrected format call */}
-                      <TableCell>{mockOutlets.find(o => o.id === transaction.outletId)?.name || 'N/A'}</TableCell>
-                      <TableCell>{mockKasirs.find(k => k.id === transaction.kasirId)?.name || 'N/A'}</TableCell>
-                      <TableCell>
+                    <TableRow key={transaction.id}>{/*
+                      */}<TableCell>{format(transaction.timestamp, "dd MMM yyyy, HH:mm")}</TableCell>{/*
+                      */}<TableCell>{mockOutlets.find(o => o.id === transaction.outletId)?.name || 'N/A'}</TableCell>{/*
+                      */}<TableCell>{mockKasirs.find(k => k.id === transaction.kasirId)?.name || 'N/A'}</TableCell>{/*
+                      */}<TableCell>
                         <Badge variant={transaction.paymentMethod === 'cash' ? 'secondary' : 'outline'} className="capitalize">
                             {transaction.paymentMethod}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
+                      </TableCell>{/*
+                      */}<TableCell className="text-right">
                         {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(transaction.totalAmount)}
-                      </TableCell>
-                    </TableRow>
+                      </TableCell>{/*
+                    */}</TableRow>
                   ))
                 ) : (
-                  <TableRow>
-                    <TableCell colSpan={5} className="h-24 text-center">
+                  <TableRow>{/*
+                    */}<TableCell colSpan={5} className="h-24 text-center">
                       No transactions match your current filters.
-                    </TableCell>
-                  </TableRow>
+                    </TableCell>{/*
+                  */}</TableRow>
                 )}
               </TableBody>
             </Table>
@@ -286,6 +286,3 @@ export default function ReportsPage() {
     </div>
   );
 }
-
-
-    
