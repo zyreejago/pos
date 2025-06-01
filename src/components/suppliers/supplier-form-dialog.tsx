@@ -1,3 +1,4 @@
+
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -25,7 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { Supplier } from "@/types";
 import { PlusCircle, Truck, User, Phone, Mail, MapPin } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react"; // Changed this line
 
 const supplierFormSchema = z.object({
   name: z.string().min(2, { message: "Supplier name must be at least 2 characters." }),
@@ -68,7 +69,7 @@ export function SupplierFormDialog({ supplier, onSave, triggerButton }: Supplier
   
   // Effect to reset form when supplier prop changes (e.g. when opening dialog for different supplier)
   // or when dialog opens for new supplier after editing one
-  React.useEffect(() => {
+  useEffect(() => { // Changed this line
     if (isOpen) {
       form.reset(supplier || {
         name: "",
