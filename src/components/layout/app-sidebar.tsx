@@ -13,10 +13,11 @@ import {
   Settings,
   DollarSign,
   Store,
-  ClipboardList,
+  ClipboardList, // Changed icon for Inventory
   UserCog,
   ShieldCheck,
   LifeBuoy,
+  Archive, // New icon for Inventory
 } from 'lucide-react';
 import {
   Sidebar,
@@ -31,7 +32,7 @@ import {
   SidebarMenuSubItem,
   SidebarGroup,
   SidebarGroupLabel,
-  SidebarSeparator, // Added SidebarSeparator
+  SidebarSeparator,
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
@@ -43,6 +44,7 @@ const menuItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/outlets', label: 'Outlet Management', icon: Store },
   { href: '/products', label: 'Products', icon: ShoppingBag },
+  { href: '/inventory', label: 'Manajemen Stok', icon: Archive }, // Added Inventory
   { href: '/suppliers', label: 'Suppliers', icon: Truck },
   { href: '/pos', label: 'Kasir (POS)', icon: DollarSign }, 
   { href: '/kasir', label: 'Manage Kasir', icon: Users }, 
@@ -92,7 +94,7 @@ export function AppSidebar() {
             <SidebarMenuItem key={item.href}>
               <SidebarMenuButton
                 asChild
-                isActive={pathname === item.href || (pathname.startsWith(item.href) && item.href !== '/dashboard')}
+                isActive={pathname === item.href || (pathname.startsWith(item.href) && item.href !== '/dashboard' && item.href !== '/')}
                 tooltip={item.label}
               >
                 <Link href={item.href} onClick={handleLinkClick}>
