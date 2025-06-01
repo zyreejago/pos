@@ -3,9 +3,10 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link'; // Added Link import
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Store, ArrowRight } from 'lucide-react';
+import { Store, ArrowRight, PlusCircle } from 'lucide-react'; // Added PlusCircle
 import type { Outlet } from '@/types';
 
 const APP_OUTLETS_STORAGE_KEY = 'tokoAppMockOutlets';
@@ -109,9 +110,15 @@ export default function SelectOutletPage() {
           ))}
           {availableOutlets.length === 0 && (
             <p className="text-center text-muted-foreground py-6">
-              No outlets available for selection. Please add an outlet in the 'Outlet Management' section if you are an admin.
+              No outlets available for selection.
             </p>
           )}
+           <Button variant="ghost" asChild className="w-full mt-6 text-primary hover:text-primary/90 hover:bg-primary/10">
+            <Link href="/outlets">
+              <PlusCircle className="mr-2 h-4 w-4" />
+              Manage / Add Outlets
+            </Link>
+          </Button>
         </CardContent>
       </Card>
        <p className="mt-8 text-center text-sm text-muted-foreground">
@@ -120,5 +127,3 @@ export default function SelectOutletPage() {
     </div>
   );
 }
-
-    

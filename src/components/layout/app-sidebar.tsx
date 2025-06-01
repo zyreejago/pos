@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from 'next/link';
@@ -15,7 +16,7 @@ import {
   ClipboardList,
   UserCog,
   ShieldCheck,
-  LifeBuoy, // Added LifeBuoy here
+  LifeBuoy,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -30,7 +31,7 @@ import {
   SidebarMenuSubItem,
   SidebarGroup,
   SidebarGroupLabel,
-  SidebarSeparator,
+  SidebarSeparator, // Added SidebarSeparator
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
@@ -104,7 +105,9 @@ export function AppSidebar() {
         </SidebarMenu>
 
         {!isSuperAdminPath && (
-            <SidebarGroup className="mt-4">
+          <>
+            <SidebarSeparator className="my-2" />
+            <SidebarGroup>
                 <SidebarGroupLabel className="group-data-[collapsible=icon]:hidden">Configuration</SidebarGroupLabel>
                 <SidebarMenu>
                     {settingsMenuItems.map((item) => (
@@ -123,9 +126,11 @@ export function AppSidebar() {
                     ))}
                 </SidebarMenu>
             </SidebarGroup>
+          </>
         )}
       </SidebarContent>
-      <SidebarFooter className="border-t p-2">
+      <SidebarSeparator className="my-0" />
+      <SidebarFooter className="border-t-0 p-2"> 
          <SidebarMenu>
             <SidebarMenuItem>
                 <SidebarMenuButton tooltip="Help & Support" asChild>
