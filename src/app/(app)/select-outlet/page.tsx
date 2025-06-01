@@ -1,45 +1,74 @@
 
 "use client";
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Store, ArrowRight } from 'lucide-react';
 import type { Outlet } from '@/types';
 
-// Mock data for outlets - consistent with other parts of the app
-// In a real app, this would be fetched based on user's merchantId
-const mockAppOutlets: Outlet[] = [
+const APP_OUTLETS_STORAGE_KEY = 'tokoAppMockOutlets';
+
+// Default outlets if localStorage is empty or invalid
+const defaultSeedOutlets: Outlet[] = [
   { id: "outlet_1", name: "Main Outlet", address: "Jl. Sudirman No. 123, Jakarta Pusat", merchantId: "merch_1" },
   { id: "outlet_2", name: "Branch Kemang", address: "Jl. Kemang Raya No. 45, Jakarta Selatan", merchantId: "merch_1" },
   { id: "outlet_3", name: "Warehouse Cilandak", address: "Jl. TB Simatupang Kav. 6, Jakarta Selatan", merchantId: "merch_1" },
-  { id: "outlet_4", name: "Toko App Bandung", address: "Jl. Asia Afrika No. 1, Bandung", merchantId: "merch_2" },
 ];
+
+const getStoredOutlets = (): Outlet[] => {
+  if (typeof window === 'undefined') {
+    return defaultSeedOutlets;
+  }
+  const stored = localStorage.getItem(APP_OUTLETS_STORAGE_KEY);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      return Array.isArray(parsed) ? parsed : defaultSeedOutlets;
+    } catch (e) {
+      console.error("Failed to parse outlets from localStorage on select page", e);
+      localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(defaultSeedOutlets));
+      return defaultSeedOutlets;
+    }
+  } else {
+    // Seed localStorage if it's empty
+    localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(defaultSeedOutlets));
+    return defaultSeedOutlets;
+  }
+};
+
 
 export default function SelectOutletPage() {
   const router = useRouter();
+  const [availableOutlets, setAvailableOutlets] = useState<Outlet[]>([]);
 
-  // Redirect if user is superadmin or if an outlet is already selected (e.g. navigating back)
   useEffect(() => {
-    const mockUserStr = localStorage.getItem('mockUser');
-    if (mockUserStr) {
-      try {
-        const mockUser = JSON.parse(mockUserStr);
-        if (mockUser.role === 'superadmin') {
-          router.push('/admin/users');
+    if (typeof window !== 'undefined') {
+      setAvailableOutlets(getStoredOutlets());
+
+      const mockUserStr = localStorage.getItem('mockUser');
+      if (mockUserStr) {
+        try {
+          const mockUser = JSON.parse(mockUserStr);
+          if (mockUser.role === 'superadmin') {
+            router.push('/admin/users');
+            return;
+          }
+        } catch (e) {
+          console.error("Error parsing mockUser for outlet selection:", e);
+          // Potentially clear corrupted user data and redirect to login
+          localStorage.removeItem('mockUser');
+          localStorage.removeItem('selectedOutletId');
+          localStorage.removeItem('selectedOutletName');
+          router.push('/login');
           return;
         }
-      } catch (e) {
-        console.error("Error parsing mockUser for outlet selection:", e);
       }
+      // No need to redirect if an outlet is already selected here,
+      // user might be intentionally navigating to change outlet.
+      // The AppLayout handles protection for other pages.
     }
-    // If an outlet is already selected and they land here, send to dashboard.
-    // This handles cases like browser back button after selection.
-    // const selectedOutletId = localStorage.getItem('selectedOutletId');
-    // if (selectedOutletId) {
-    //   router.push('/dashboard');
-    // }
   }, [router]);
 
   const handleSelectOutlet = (outlet: Outlet) => {
@@ -61,7 +90,7 @@ export default function SelectOutletPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {mockAppOutlets.map((outlet) => (
+          {availableOutlets.map((outlet) => (
             <Button
               key={outlet.id}
               variant="outline"
@@ -78,8 +107,10 @@ export default function SelectOutletPage() {
               <ArrowRight className="h-5 w-5 text-muted-foreground" />
             </Button>
           ))}
-          {mockAppOutlets.length === 0 && (
-            <p className="text-center text-muted-foreground">No outlets available for selection.</p>
+          {availableOutlets.length === 0 && (
+            <p className="text-center text-muted-foreground py-6">
+              No outlets available for selection. Please add an outlet in the 'Outlet Management' section if you are an admin.
+            </p>
           )}
         </CardContent>
       </Card>
@@ -89,3 +120,5 @@ export default function SelectOutletPage() {
     </div>
   );
 }
+
+    

@@ -16,7 +16,7 @@ import {
   LogOut,
   Settings as SettingsIcon,
   LifeBuoy,
-  Store, // Added Store icon
+  Store, 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetTrigger, SheetContent } from "@/components/ui/sheet"; // Ensure SheetContent and SheetTrigger are imported
+import { Sheet, SheetTrigger, SheetContent } from "@/components/ui/sheet"; 
 import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import {
   Select,
@@ -39,36 +39,57 @@ import {
 } from "@/components/ui/select";
 import Image from 'next/image';
 import React, { useEffect, useState } from 'react';
-import { useRouter, usePathname } from 'next/navigation'; // Added usePathname
+import { useRouter, usePathname } from 'next/navigation'; 
 import { useToast } from '@/hooks/use-toast';
-import type { Outlet } from '@/types'; // Import Outlet type
+import type { Outlet } from '@/types'; 
 
-// Mock user type
 interface MockUser {
   email: string;
   displayName: string;
   role?: string;
 }
 
-// Consistent mock outlets
-const mockAppOutlets: Outlet[] = [
+const APP_OUTLETS_STORAGE_KEY = 'tokoAppMockOutlets';
+
+// Default outlets if localStorage is empty or invalid
+const defaultSeedOutlets: Outlet[] = [
   { id: "outlet_1", name: "Main Outlet", address: "Jl. Sudirman No. 123, Jakarta Pusat", merchantId: "merch_1" },
   { id: "outlet_2", name: "Branch Kemang", address: "Jl. Kemang Raya No. 45, Jakarta Selatan", merchantId: "merch_1" },
   { id: "outlet_3", name: "Warehouse Cilandak", address: "Jl. TB Simatupang Kav. 6, Jakarta Selatan", merchantId: "merch_1" },
-  { id: "outlet_4", name: "Toko App Bandung", address: "Jl. Asia Afrika No. 1, Bandung", merchantId: "merch_2" },
 ];
+
+const getStoredOutlets = (): Outlet[] => {
+  if (typeof window === 'undefined') {
+    return defaultSeedOutlets;
+  }
+  const stored = localStorage.getItem(APP_OUTLETS_STORAGE_KEY);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      return Array.isArray(parsed) ? parsed : defaultSeedOutlets;
+    } catch (e) {
+      console.error("Failed to parse outlets from localStorage in header", e);
+      localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(defaultSeedOutlets)); // Reseed if corrupt
+      return defaultSeedOutlets;
+    }
+  } else {
+    // Seed localStorage if it's empty
+    localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(defaultSeedOutlets));
+    return defaultSeedOutlets;
+  }
+};
 
 
 export function AppHeader() {
   const { isMobile } = useSidebar();
   const [currentUser, setCurrentUser] = useState<MockUser | null>(null);
   const [selectedOutletId, setSelectedOutletId] = useState<string | null>(null);
+  const [availableOutlets, setAvailableOutlets] = useState<Outlet[]>([]);
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
 
   useEffect(() => {
-    // Check for mock user in localStorage
     if (typeof window !== 'undefined') {
       const storedUser = localStorage.getItem('mockUser');
       if (storedUser) {
@@ -79,20 +100,36 @@ export function AppHeader() {
           localStorage.removeItem('mockUser'); 
         }
       }
-      // Get selected outlet
+      
+      const outletsFromStorage = getStoredOutlets();
+      setAvailableOutlets(outletsFromStorage);
+
       const storedOutletId = localStorage.getItem('selectedOutletId');
-      setSelectedOutletId(storedOutletId);
+      // Ensure selectedOutletId is valid against available outlets
+      if (storedOutletId && outletsFromStorage.some(o => o.id === storedOutletId)) {
+        setSelectedOutletId(storedOutletId);
+      } else if (outletsFromStorage.length > 0 && !pathname.startsWith('/select-outlet') && (!storedUser || JSON.parse(storedUser).role !== 'superadmin')) {
+        // If no valid outlet selected, and there are outlets, and not superadmin, and not on select-outlet page
+        // this scenario should ideally be caught by AppLayout, but as a fallback, clear potentially invalid selection
+        localStorage.removeItem('selectedOutletId');
+        localStorage.removeItem('selectedOutletName');
+        setSelectedOutletId(null);
+      } else {
+        setSelectedOutletId(storedOutletId); // can be null if not set
+      }
     }
-  }, [router, pathname]); // Re-check on route change
+  }, [pathname]); // Re-check on route change, especially selectedOutletId from localStorage
 
   const handleLogout = async () => {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('mockUser');
       localStorage.removeItem('selectedOutletId');
       localStorage.removeItem('selectedOutletName');
+      localStorage.removeItem(APP_OUTLETS_STORAGE_KEY); // Optional: Clear outlets on logout, or keep them for next login
     }
     setCurrentUser(null);
     setSelectedOutletId(null);
+    setAvailableOutlets(defaultSeedOutlets); // Reset to default
     toast({
       title: "Logged Out (Mock)",
       description: "You have been successfully logged out.",
@@ -100,17 +137,20 @@ export function AppHeader() {
     router.push('/login');
   };
   
-  const handleOutletChange = (outletId: string) => {
-    const selectedOutlet = mockAppOutlets.find(o => o.id === outletId);
-    if (selectedOutlet && typeof window !== 'undefined') {
-      localStorage.setItem('selectedOutletId', selectedOutlet.id);
-      localStorage.setItem('selectedOutletName', selectedOutlet.name);
-      setSelectedOutletId(selectedOutlet.id);
+  const handleOutletChange = (newOutletId: string) => {
+    const selectedOutletDetails = availableOutlets.find(o => o.id === newOutletId);
+    if (selectedOutletDetails && typeof window !== 'undefined') {
+      localStorage.setItem('selectedOutletId', selectedOutletDetails.id);
+      localStorage.setItem('selectedOutletName', selectedOutletDetails.name);
+      setSelectedOutletId(selectedOutletDetails.id);
       toast({
         title: "Outlet Changed",
-        description: `Switched to ${selectedOutlet.name}.`,
+        description: `Switched to ${selectedOutletDetails.name}.`,
       });
-      router.push('/dashboard'); // Navigate to dashboard to apply new outlet context
+      // Force a reload or navigate to dashboard to ensure all components re-evaluate based on new outlet
+      // router.push('/dashboard'); 
+      // A full page refresh might be more robust for a full context switch in a mock setup
+       window.location.pathname = '/dashboard'; // Or specific page that needs outlet context
     }
   };
 
@@ -130,32 +170,32 @@ export function AppHeader() {
       )}
       
       <div className="flex w-full items-center gap-4 md:ml-auto md:gap-2 lg:gap-4">
-        {showOutletSelector && selectedOutletId && (
+        {showOutletSelector && (
           <div className="ml-auto flex-1 sm:flex-initial">
-            <Select value={selectedOutletId} onValueChange={handleOutletChange}>
+            <Select 
+              value={selectedOutletId || ""} // Ensure value is not null for Select
+              onValueChange={handleOutletChange}
+              disabled={availableOutlets.length === 0}
+            >
               <SelectTrigger className="w-full md:w-[200px] lg:w-[280px] bg-background shadow-inner">
                 <div className="flex items-center gap-2">
-                  <Store className="h-4 w-4 text-muted-foreground" /> {/* Changed icon to Store */}
+                  <Store className="h-4 w-4 text-muted-foreground" /> 
                   <SelectValue placeholder="Select Outlet" />
                 </div>
               </SelectTrigger>
               <SelectContent>
-                {mockAppOutlets.map((outlet) => ( // Using mockAppOutlets
+                {availableOutlets.length > 0 ? availableOutlets.map((outlet) => ( 
                   <SelectItem key={outlet.id} value={outlet.id}>
                     {outlet.name}
                   </SelectItem>
-                ))}
+                )) : (
+                  <SelectItem value="no-outlets" disabled>No outlets available</SelectItem>
+                )}
               </SelectContent>
             </Select>
           </div>
         )}
-        {/* If no outlet selected and should be shown, perhaps a message or disabled selector */}
-        {showOutletSelector && !selectedOutletId && (
-           <div className="ml-auto flex-1 sm:flex-initial text-sm text-muted-foreground">
-             Please select an outlet.
-           </div>
-        )}
-
+      
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="rounded-full">
@@ -185,22 +225,12 @@ export function AppHeader() {
                     </Link>
                   </DropdownMenuItem>
                 )}
-                {/* <DropdownMenuItem asChild>
-                  <Link href="/dashboard/profile" className="flex items-center gap-2 cursor-pointer">
-                    <CircleUser className="h-4 w-4" />
-                    <span>Profile</span>
-                  </Link>
-                </DropdownMenuItem> */}
                 <DropdownMenuItem asChild>
                    <Link href="/settings" className="flex items-center gap-2 cursor-pointer">
                     <SettingsIcon className="h-4 w-4" />
                     <span>Settings</span>
                   </Link>
                 </DropdownMenuItem>
-                {/* <DropdownMenuItem className="flex items-center gap-2 cursor-pointer">
-                  <LifeBuoy className="h-4 w-4" />
-                  <span>Support</span>
-                </DropdownMenuItem> */}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout} className="flex items-center gap-2 cursor-pointer text-red-600 hover:!text-red-600 focus:text-red-600 dark:text-red-500 dark:hover:!text-red-500 dark:focus:text-red-500">
                   <LogOut className="h-4 w-4"/>
@@ -229,3 +259,5 @@ export function AppHeader() {
     </header>
   );
 }
+
+    

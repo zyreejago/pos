@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Table,
   TableBody,
@@ -33,32 +34,65 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-// Mock data
-const mockOutletsData: Outlet[] = [
+const APP_OUTLETS_STORAGE_KEY = 'tokoAppMockOutlets';
+
+const initialMockOutlets: Outlet[] = [
   { id: "outlet_1", name: "Main Outlet", address: "Jl. Sudirman No. 123, Jakarta Pusat", merchantId: "merch_1" },
   { id: "outlet_2", name: "Branch Kemang", address: "Jl. Kemang Raya No. 45, Jakarta Selatan", merchantId: "merch_1" },
   { id: "outlet_3", name: "Warehouse Cilandak", address: "Jl. TB Simatupang Kav. 6, Jakarta Selatan", merchantId: "merch_1" },
 ];
 
+const getStoredOutlets = (): Outlet[] => {
+  if (typeof window === 'undefined') {
+    return initialMockOutlets;
+  }
+  const stored = localStorage.getItem(APP_OUTLETS_STORAGE_KEY);
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch (e) {
+      console.error("Failed to parse outlets from localStorage", e);
+      localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(initialMockOutlets));
+      return initialMockOutlets;
+    }
+  } else {
+    localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(initialMockOutlets));
+    return initialMockOutlets;
+  }
+};
+
+const storeOutlets = (outlets: Outlet[]) => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(outlets));
+  }
+};
+
 export function OutletsTable() {
-  const [outlets, setOutlets] = useState<Outlet[]>(mockOutletsData);
+  const [outlets, setOutlets] = useState<Outlet[]>([]);
   const [editingOutlet, setEditingOutlet] = useState<Outlet | undefined>(undefined);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [outletToDelete, setOutletToDelete] = useState<Outlet | null>(null);
   const { toast } = useToast();
 
+  useEffect(() => {
+    setOutlets(getStoredOutlets());
+  }, []);
+
   const handleSaveOutlet = async (data: Omit<Outlet, 'id' | 'merchantId'> & { id?: string }) => {
      return new Promise<void>((resolve) => {
         setTimeout(() => {
+            let updatedOutlets: Outlet[];
             if (editingOutlet) {
-                setOutlets(outlets.map(o => o.id === editingOutlet.id ? { ...editingOutlet, ...data, id: editingOutlet.id, merchantId: "merch_1" } : o));
+                updatedOutlets = outlets.map(o => o.id === editingOutlet.id ? { ...editingOutlet, ...data, id: editingOutlet.id, merchantId: "merch_1" } : o);
                 toast({ title: "Outlet Updated", description: `Outlet ${data.name} has been updated.`});
             } else {
                 const newOutlet: Outlet = { ...data, id: `outlet_${Date.now()}`, merchantId: "merch_1" };
-                setOutlets([newOutlet, ...outlets]);
+                updatedOutlets = [newOutlet, ...outlets];
                 toast({ title: "Outlet Added", description: `Outlet ${newOutlet.name} has been added.`});
             }
+            setOutlets(updatedOutlets);
+            storeOutlets(updatedOutlets);
             setEditingOutlet(undefined);
             setIsFormOpen(false);
             resolve();
@@ -83,7 +117,9 @@ export function OutletsTable() {
 
   const confirmDelete = () => {
     if (outletToDelete) {
-      setOutlets(outlets.filter(o => o.id !== outletToDelete.id));
+      const updatedOutlets = outlets.filter(o => o.id !== outletToDelete.id);
+      setOutlets(updatedOutlets);
+      storeOutlets(updatedOutlets);
       toast({ title: "Outlet Deleted", description: `Outlet ${outletToDelete.name} has been deleted.`, variant: "destructive" });
     }
     setShowDeleteConfirm(false);
@@ -172,9 +208,11 @@ export function OutletsTable() {
         <OutletFormDialog
           outlet={editingOutlet}
           onSave={handleSaveOutlet}
-          triggerButton={<div style={{display: 'none'}} />} // Hidden trigger, dialog controlled by isFormOpen
+          triggerButton={<div style={{display: 'none'}} />} 
         />
       )}
     </>
   );
 }
+
+    
