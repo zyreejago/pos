@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -11,7 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MoreHorizontal, Edit3, Trash2, PlusCircle, KeyRound, CheckCircle, XCircle, UserPlus, Store } from "lucide-react";
+import { MoreHorizontal, Edit3, Trash2, PlusCircle, KeyRound, CheckCircle, XCircle, UserPlus, Store, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,73 +33,93 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { MerchantFormDialog } from './merchant-form-dialog'; // Assuming a separate dialog for adding merchants
-
-// Mock data representing all users
-const mockAllUsers: User[] = [
-  { id: "user_merchant_1", name: "Toko Sejahtera", email: "sejahtera@example.com", role: "admin", status: "active", merchantId: "merchant_1" },
-  { id: "user_kasir_1_1", name: "Andi Setiawan (Sejahtera)", email: "andi.s@sejahtera.com", role: "kasir", status: "active", merchantId: "merchant_1", outlets: ["outlet_A_1"] },
-  { id: "user_merchant_2", name: "Warung Barokah", email: "barokah@example.com", role: "admin", status: "pending_approval", merchantId: "merchant_2" },
-  { id: "user_superadmin_1", name: "Super Admin", email: "super@tokoapp.com", role: "superadmin", status: "active" },
-  { id: "user_merchant_3", name: "Cafe Senja", email: "senja@example.com", role: "admin", status: "inactive", merchantId: "merchant_3" },
-  { id: "user_kasir_3_1", name: "Rina (Senja)", email: "rina@senja.com", role: "kasir", status: "active", merchantId: "merchant_3", outlets: ["outlet_C_1"] },
-];
-
+import { MerchantFormDialog } from './merchant-form-dialog';
+import { auth, db, serverTimestamp } from '@/lib/firebase'; // Import Firebase config
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { collection, doc, setDoc, getDocs, updateDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 
 export function UserManagementTable() {
-  const [users, setUsers] = useState<User[]>(mockAllUsers);
-  const [editingUser, setEditingUser] = useState<User | undefined>(undefined); // For editing via a generic user form (if any)
+  const [users, setUsers] = useState<User[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isMerchantFormOpen, setIsMerchantFormOpen] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ user: User; actionType: 'approve' | 'deactivate' | 'activate' | 'delete' } | null>(null);
   const { toast } = useToast();
 
-  const handleApproveMerchant = (user: User) => {
-    setConfirmAction({ user, actionType: 'approve' });
+  const fetchUsers = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const usersCollectionRef = collection(db, "users");
+      // Superadmin sees all users, potentially ordered by role or creation date
+      const q = query(usersCollectionRef, orderBy("createdAt", "desc"));
+      const querySnapshot = await getDocs(q);
+      const fetchedUsers: User[] = [];
+      querySnapshot.forEach((doc) => {
+        fetchedUsers.push({ id: doc.id, ...doc.data() } as User);
+      });
+      setUsers(fetchedUsers);
+    } catch (error) {
+      console.error("Error fetching users: ", error);
+      toast({ title: "Fetch Failed", description: "Could not load user data.", variant: "destructive" });
+    }
+    setIsLoading(false);
+  }, [toast]);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  const handleApproveMerchant = async (userToApprove: User) => {
+    setConfirmAction({ user: userToApprove, actionType: 'approve' });
     setShowConfirmDialog(true);
   };
 
-  const handleChangeStatus = (user: User, newStatus: 'active' | 'inactive') => {
-     setConfirmAction({ user, actionType: newStatus === 'active' ? 'activate' : 'deactivate' });
+  const handleChangeStatus = (userToChange: User, newStatus: 'active' | 'inactive') => {
+     setConfirmAction({ user: userToChange, actionType: newStatus === 'active' ? 'activate' : 'deactivate' });
      setShowConfirmDialog(true);
   };
   
-  const handleDeleteUser = (user: User) => {
-    setConfirmAction({ user, actionType: 'delete' });
+  const handleDeleteUser = (userToDelete: User) => {
+    setConfirmAction({ user: userToDelete, actionType: 'delete' });
     setShowConfirmDialog(true);
   };
 
-  const executeConfirmAction = () => {
+  const executeConfirmAction = async () => {
     if (!confirmAction) return;
     const { user, actionType } = confirmAction;
+    const userDocRef = doc(db, "users", user.id);
 
-    let newUserStatus: User['status'] | undefined;
     let toastMessage = "";
 
-    switch (actionType) {
-        case 'approve':
-            newUserStatus = 'active';
-            toastMessage = `Merchant ${user.name} has been approved and activated.`;
-            break;
-        case 'activate':
-            newUserStatus = 'active';
-            toastMessage = `User ${user.name} has been activated.`;
-            break;
-        case 'deactivate':
-            newUserStatus = 'inactive';
-            toastMessage = `User ${user.name} has been deactivated.`;
-            break;
-        case 'delete':
-            setUsers(users.filter(u => u.id !== user.id));
-            toast({ title: "User Deleted", description: `User ${user.name} has been permanently deleted.`, variant: "destructive" });
-            setShowConfirmDialog(false);
-            setConfirmAction(null);
-            return; // Early return for delete as it modifies the array differently
-    }
-    
-    if (newUserStatus) {
-        setUsers(users.map(u => u.id === user.id ? { ...u, status: newUserStatus! } : u));
-        toast({ title: "Action Successful", description: toastMessage });
+    try {
+      switch (actionType) {
+          case 'approve':
+              await updateDoc(userDocRef, { status: 'active' });
+              toastMessage = `Merchant ${user.name} has been approved and activated.`;
+              break;
+          case 'activate':
+              await updateDoc(userDocRef, { status: 'active' });
+              toastMessage = `User ${user.name} has been activated.`;
+              break;
+          case 'deactivate':
+              await updateDoc(userDocRef, { status: 'inactive' });
+              toastMessage = `User ${user.name} has been deactivated.`;
+              break;
+          case 'delete':
+              // Deleting Firestore document. Auth user deletion needs Admin SDK or manual intervention.
+              await deleteDoc(userDocRef);
+              toastMessage = `User ${user.name}'s data has been deleted from the database.`;
+              toast({ title: "User Data Deleted", description: toastMessage, variant: "destructive" });
+              fetchUsers(); // Refresh list
+              setShowConfirmDialog(false);
+              setConfirmAction(null);
+              return; 
+      }
+      toast({ title: "Action Successful", description: toastMessage });
+      fetchUsers(); // Refresh list
+    } catch (error) {
+        console.error(`Error performing action ${actionType} for user ${user.id}:`, error);
+        toast({ title: "Action Failed", description: `Could not ${actionType} user. Please try again.`, variant: "destructive" });
     }
 
     setShowConfirmDialog(false);
@@ -106,32 +127,56 @@ export function UserManagementTable() {
   };
 
   const handleChangePassword = (user: User) => {
-    // Placeholder for password change functionality (usually involves a secure form/dialog)
-    toast({ title: "Password Change Initiated", description: `Password change process for ${user.name} has started. (Not implemented)` });
+    toast({ title: "Password Change", description: `Password change for ${user.name} needs to be handled (e.g., via Firebase console or custom flow).` });
   };
   
   const handleAddMerchant = async (data: { name: string, email: string, password?: string }) => {
-     return new Promise<void>((resolve) => {
-        setTimeout(() => {
-            const newMerchant: User = {
-                id: `merchant_${Date.now()}`,
+    if (!data.password) {
+        toast({ title: "Error", description: "Password is required to create a new merchant admin.", variant: "destructive" });
+        return;
+    }
+    setIsLoading(true); // Consider a specific loading state for the dialog/button
+    try {
+        // 1. Create user in Firebase Authentication
+        const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
+        const firebaseUser = userCredential.user;
+
+        if (firebaseUser) {
+            // Optionally update Firebase Auth profile display name
+            await updateProfile(firebaseUser, { displayName: data.name });
+
+            // 2. Create user document in Firestore
+            const newUserDoc: User = {
+                id: firebaseUser.uid,
                 name: data.name,
                 email: data.email,
-                role: 'admin', // Merchant admin
-                status: 'active', // Directly active
-                merchantId: `merchant_${Date.now()}` // Assign a new merchantId
+                role: 'admin', // New user created by superadmin is a merchant admin
+                status: 'active', // Active by default when created by superadmin
+                merchantId: firebaseUser.uid, // Merchant's own UID becomes their merchantId
+                createdAt: serverTimestamp(),
             };
-            setUsers([newMerchant, ...users]);
-            toast({ title: "Merchant Added", description: `Merchant ${newMerchant.name} has been added and activated.` });
-            setIsMerchantFormOpen(false);
-            resolve();
-        }, 500);
-    });
+            await setDoc(doc(db, "users", firebaseUser.uid), newUserDoc);
+
+            toast({ title: "Merchant Added", description: `Merchant ${data.name} with admin ${data.email} has been created and activated.` });
+            setIsMerchantFormOpen(false); // Close dialog
+            fetchUsers(); // Refresh the user list from Firestore
+        }
+    } catch (error: any) {
+        console.error("Error adding new merchant: ", error);
+        let errorMessage = "Failed to add merchant. Please try again.";
+        if (error.code === 'auth/email-already-in-use') {
+            errorMessage = "This email is already registered.";
+        } else if (error.code === 'auth/weak-password') {
+            errorMessage = "The password is too weak. Please choose a stronger password.";
+        }
+        toast({ title: "Add Merchant Failed", description: errorMessage, variant: "destructive" });
+    }
+    setIsLoading(false); // Reset loading state
   };
   
   const getStatusBadgeVariant = (status: User['status']) => {
-    if (status === 'active') return 'default'; // default is often green-ish or primary
-    if (status === 'pending_approval') return 'secondary'; // secondary can be yellow/orange like
+    if (status === 'active') return 'default';
+    if (status === 'pending_approval') return 'secondary';
     if (status === 'inactive') return 'destructive';
     return 'outline';
   };
@@ -144,6 +189,15 @@ export function UserManagementTable() {
         default: return role;
     }
   };
+
+  if (isLoading && users.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Loading users...</p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -174,10 +228,10 @@ export function UserManagementTable() {
                 </TableCell>
                 <TableCell>
                   <Badge variant={getStatusBadgeVariant(user.status)} className="capitalize bg-opacity-20 border-opacity-50">
-                    {user.status.replace('_', ' ')}
+                    {user.status?.replace('_', ' ') || 'N/A'}
                   </Badge>
                 </TableCell>
-                <TableCell>{user.merchantId || 'N/A (Superadmin)'}</TableCell>
+                <TableCell>{user.merchantId || (user.role === 'superadmin' ? 'N/A (Superadmin)' : 'Not Set')}</TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -193,10 +247,13 @@ export function UserManagementTable() {
                           <CheckCircle className="mr-2 h-4 w-4" /> Approve Merchant
                         </DropdownMenuItem>
                       )}
-                      {/* <DropdownMenuItem onClick={() => {}}> // Edit User details (if a generic form exists)
+                      {/* Edit details might require a separate, more generic user form or direct fields */}
+                      {/* 
+                      <DropdownMenuItem onClick={() => {}}> 
                         <Edit3 className="mr-2 h-4 w-4" /> Edit Details 
-                      </DropdownMenuItem> */}
-                      {(user.role === 'admin' || user.role === 'superadmin') && ( // Allow password change for admin/superadmin
+                      </DropdownMenuItem> 
+                      */}
+                      {(user.role === 'admin' || user.role === 'superadmin') && (
                         <DropdownMenuItem onClick={() => handleChangePassword(user)}>
                           <KeyRound className="mr-2 h-4 w-4" /> Change Password
                         </DropdownMenuItem>
@@ -212,9 +269,9 @@ export function UserManagementTable() {
                           <CheckCircle className="mr-2 h-4 w-4" /> Activate Account
                         </DropdownMenuItem>
                       )}
-                      {user.role !== 'superadmin' && ( // Superadmin cannot be deleted
+                      {user.role !== 'superadmin' && ( 
                         <DropdownMenuItem onClick={() => handleDeleteUser(user)} className="text-destructive focus:text-destructive focus:bg-destructive/10">
-                          <Trash2 className="mr-2 h-4 w-4" /> Delete User
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete User Data
                         </DropdownMenuItem>
                       )}
                     </DropdownMenuContent>
@@ -222,6 +279,13 @@ export function UserManagementTable() {
                 </TableCell>
               </TableRow>
             ))}
+             {users.length === 0 && !isLoading && (
+              <TableRow>
+                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                  No users found.
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </div>
@@ -233,11 +297,11 @@ export function UserManagementTable() {
             <AlertDialogDescription>
               Are you sure you want to {confirmAction?.actionType.replace('_', ' ')} the user 
               <span className="font-semibold"> {confirmAction?.user.name}</span>?
-              {confirmAction?.actionType === 'delete' && " This action cannot be undone."}
+              {confirmAction?.actionType === 'delete' && " This action will delete the user's data from the database but their authentication account might remain."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => { setShowConfirmDialog(false); setConfirmAction(null); }}>Cancel</AlertDialogCancel>
             <AlertDialogAction 
                 onClick={executeConfirmAction} 
                 className={confirmAction?.actionType.includes('delete') || confirmAction?.actionType.includes('deactivate') ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground" : ""}>
