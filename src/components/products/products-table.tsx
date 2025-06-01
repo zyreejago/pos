@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from 'react'; // Added useCallback
+import { useState, useEffect, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MoreHorizontal, Edit3, Trash2, PlusCircle, Loader2 } from "lucide-react"; // Added Loader2
+import { MoreHorizontal, Edit3, Trash2, PlusCircle, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,8 +34,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { db } from '@/lib/firebase'; // Import db
-import { collection, query, where, getDocs, doc, deleteDoc, orderBy } from 'firebase/firestore'; // Import Firestore functions
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, doc, deleteDoc, orderBy } from 'firebase/firestore';
 
 interface StoredUser {
   id: string;
@@ -45,7 +45,8 @@ interface StoredUser {
   merchantId?: string;
 }
 
-const getCurrentUser = (): StoredUser | null => {
+// This function is now only called client-side after mount
+const getAuthenticatedUserFromStorage = (): StoredUser | null => {
   if (typeof window !== 'undefined') {
     const storedUserStr = localStorage.getItem('mockUser');
     if (storedUserStr) {
@@ -62,27 +63,36 @@ const getCurrentUser = (): StoredUser | null => {
 
 export function ProductsTable() {
   const [products, setProducts] = useState<Product[]>([]);
-  const [allSuppliers, setAllSuppliers] = useState<Supplier[]>([]); // State for suppliers
-  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
-  const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(true);
+  const [allSuppliers, setAllSuppliers] = useState<Supplier[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true); // True by default to indicate loading until data is fetched or user is invalid
+  const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(true); // Same as above
+  
   const [editingProduct, setEditingProduct] = useState<Product | undefined>(undefined);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  
   const { toast } = useToast();
-  const currentUser = getCurrentUser();
+  
+  const [currentUserLocal, setCurrentUserLocal] = useState<StoredUser | null>(null);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+    setCurrentUserLocal(getAuthenticatedUserFromStorage());
+  }, []);
 
   const fetchProducts = useCallback(async () => {
-    if (!currentUser || !currentUser.merchantId) {
-      setIsLoadingProducts(false);
+    if (!currentUserLocal || !currentUserLocal.merchantId) {
       setProducts([]);
+      setIsLoadingProducts(false); // Stop loading if no valid user/merchantId
       return;
     }
     setIsLoadingProducts(true);
     try {
       const q = query(
-        collection(db, "products"), 
-        where("merchantId", "==", currentUser.merchantId),
+        collection(db, "products"),
+        where("merchantId", "==", currentUserLocal.merchantId),
         orderBy("createdAt", "desc")
       );
       const querySnapshot = await getDocs(q);
@@ -91,26 +101,26 @@ export function ProductsTable() {
         fetchedProducts.push({ id: doc.id, ...doc.data() } as Product);
       });
       setProducts(fetchedProducts);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching products: ", error);
-      toast({ title: "Product Fetch Failed", description: "Could not fetch products data.", variant: "destructive" });
+      toast({ title: "Product Fetch Failed", description: `Could not fetch products data. ${error.message}`, variant: "destructive" });
       setProducts([]);
     }
     setIsLoadingProducts(false);
-  }, [currentUser, toast]);
+  }, [currentUserLocal, toast]);
 
   const fetchAllSuppliers = useCallback(async () => {
-    if (!currentUser || !currentUser.merchantId) {
-      setIsLoadingSuppliers(false);
+    if (!currentUserLocal || !currentUserLocal.merchantId) {
       setAllSuppliers([]);
+      setIsLoadingSuppliers(false); // Stop loading if no valid user/merchantId
       return;
     }
     setIsLoadingSuppliers(true);
     try {
       const q = query(
         collection(db, "suppliers"),
-        where("merchantId", "==", currentUser.merchantId),
-        orderBy("name", "asc") // Order by name for dropdown
+        where("merchantId", "==", currentUserLocal.merchantId),
+        orderBy("name", "asc")
       );
       const querySnapshot = await getDocs(q);
       const fetchedSuppliers: Supplier[] = [];
@@ -120,20 +130,24 @@ export function ProductsTable() {
       setAllSuppliers(fetchedSuppliers);
     } catch (error) {
       console.error("Error fetching suppliers for product form: ", error);
-      // Not toasting here as it might be too noisy if products load fine
       setAllSuppliers([]);
     }
     setIsLoadingSuppliers(false);
-  }, [currentUser]);
-
+  }, [currentUserLocal]);
 
   useEffect(() => {
-    fetchProducts();
-    fetchAllSuppliers(); // Fetch suppliers when component mounts or user changes
-  }, [fetchProducts, fetchAllSuppliers]);
+    if (isClient && currentUserLocal) { // Only fetch if client and user is determined
+      fetchProducts();
+      fetchAllSuppliers();
+    } else if (isClient && !currentUserLocal) {
+      // If client and no user, stop loading states
+      setIsLoadingProducts(false);
+      setIsLoadingSuppliers(false);
+    }
+  }, [isClient, currentUserLocal, fetchProducts, fetchAllSuppliers]);
 
   const handleSaveSuccess = () => {
-    fetchProducts(); // Re-fetch products after save
+    fetchProducts(); 
   };
 
   const openEditDialog = (product: Product) => {
@@ -152,7 +166,7 @@ export function ProductsTable() {
   };
 
   const confirmDelete = async () => {
-    if (productToDelete) {
+    if (productToDelete && currentUserLocal) { // Ensure currentUserLocal for operations
       try {
         await deleteDoc(doc(db, "products", productToDelete.id));
         toast({ title: "Product Deleted", description: `${productToDelete.name} has been deleted.`, variant: "destructive" });
@@ -166,19 +180,51 @@ export function ProductsTable() {
     setProductToDelete(null);
   };
   
-  const isLoading = isLoadingProducts || isLoadingSuppliers;
-
-
-  if (!currentUser) {
-     return (
+  if (!isClient) {
+    // Server render and initial client render before useEffect populates isClient
+    return (
       <div className="flex flex-col items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-        <p className="text-muted-foreground">Loading user data...</p>
+        <p className="text-muted-foreground">Initializing...</p>
       </div>
     );
   }
 
-  if (isLoading) {
+  if (!currentUserLocal) {
+    // Client-side, but no authenticated user found in localStorage
+    return (
+      <>
+        <div className="flex justify-end mb-4">
+          <Button disabled={true}>
+            <PlusCircle className="mr-2 h-4 w-4" /> Add Product
+          </Button>
+        </div>
+        <div className="flex flex-col items-center justify-center h-64">
+          <p className="text-muted-foreground">User data not available. Please log in to manage products.</p>
+        </div>
+      </>
+    );
+  }
+
+  if (!currentUserLocal.merchantId) {
+    // Client-side, user found, but no merchantId
+     return (
+      <>
+        <div className="flex justify-end mb-4">
+          <Button disabled={true}>
+            <PlusCircle className="mr-2 h-4 w-4" /> Add Product
+          </Button>
+        </div>
+        <div className="p-4 text-center text-destructive-foreground bg-destructive/80 rounded-md">
+          Merchant information is missing for your account. Cannot manage products.
+        </div>
+      </>
+    );
+  }
+
+  // At this point, isClient is true and currentUserLocal exists with a merchantId.
+  // Now, we check the loading state for actual product/supplier data.
+  if (isLoadingProducts || isLoadingSuppliers) {
     return (
       <div className="flex flex-col items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
@@ -190,7 +236,7 @@ export function ProductsTable() {
   return (
     <>
       <div className="flex justify-end mb-4">
-         <Button onClick={openNewDialog} disabled={!currentUser?.merchantId || isLoadingSuppliers}>
+         <Button onClick={openNewDialog} disabled={!currentUserLocal?.merchantId || isLoadingSuppliers}>
             <PlusCircle className="mr-2 h-4 w-4" /> Add Product
         </Button>
       </div>
@@ -241,7 +287,7 @@ export function ProductsTable() {
                 </TableCell>
               </TableRow>
             ))}
-            {products.length === 0 && !isLoadingProducts && (
+            {products.length === 0 && !isLoadingProducts && ( // Check !isLoadingProducts here
               <TableRow>
                 <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
                   No products found. Start by adding a new product.
@@ -269,10 +315,10 @@ export function ProductsTable() {
         </AlertDialogContent>
       </AlertDialog>
       
-      {isFormOpen && (
+      {isFormOpen && currentUserLocal && ( // Ensure currentUserLocal for ProductFormDialog context
         <ProductFormDialog
             product={editingProduct}
-            suppliers={allSuppliers} // Pass fetched suppliers
+            suppliers={allSuppliers}
             onSaveSuccess={handleSaveSuccess}
             isOpenProp={isFormOpen}
             onOpenChangeProp={setIsFormOpen}
@@ -281,3 +327,5 @@ export function ProductsTable() {
     </>
   );
 }
+
+  
