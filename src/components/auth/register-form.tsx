@@ -15,13 +15,14 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { User as UserIconStandard, Mail, Lock } from 'lucide-react'; // Renamed User to avoid conflict
+import { User as UserIconStandard, Mail, Lock } from 'lucide-react';
 import { useState } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from 'next/navigation';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { auth, db } from '@/lib/firebase'; // Import db
-import { doc, setDoc, serverTimestamp } from "firebase/firestore"; // Import Firestore functions
+// Firebase imports removed
+// import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+// import { auth, db } from '@/lib/firebase';
+// import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import type { User } from '@/types';
 
 
@@ -54,62 +55,18 @@ export function RegisterForm() {
 
   async function onSubmit(values: RegisterFormValues) {
     setIsLoading(true);
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
-      const firebaseUser = userCredential.user;
+    // Simulate API call
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
-      if (firebaseUser) {
-        // Update user profile with merchant name as displayName
-        await updateProfile(firebaseUser, {
-          displayName: values.merchantName,
-        });
+    // Mock registration logic
+    console.log("Mock Registration Data:", values);
+    toast({
+      title: "Registration Successful! (Mock)",
+      description: "Your account has been created (simulated). You can now log in.",
+    });
+    router.push("/login");
 
-        // Create user document in Firestore
-        const userRef = doc(db, "users", firebaseUser.uid);
-        const userData: User = {
-          id: firebaseUser.uid,
-          name: values.merchantName,
-          email: values.email,
-          role: 'admin', // Default role for self-registered merchant admin
-          status: 'pending_approval', // Default status
-          merchantId: firebaseUser.uid, // Use UID as merchantId for new merchant
-          createdAt: serverTimestamp(),
-        };
-        await setDoc(userRef, userData);
-      }
-
-      toast({
-        title: "Registration Successful!",
-        description: "Your account has been created and is pending approval. You can now log in.",
-      });
-      router.push("/login");
-    } catch (error: any) {
-      console.error("Firebase registration error:", error);
-      let errorMessage = "An unexpected error occurred during registration.";
-       if (error.code) {
-        switch (error.code) {
-          case 'auth/email-already-in-use':
-            errorMessage = "This email address is already in use.";
-            break;
-          case 'auth/invalid-email':
-            errorMessage = "The email address is not valid.";
-            break;
-          case 'auth/weak-password':
-            errorMessage = "The password is too weak.";
-            break;
-          default:
-            errorMessage = "Failed to register. Please try again later.";
-            break;
-        }
-      }
-      toast({
-        title: "Registration Failed",
-        description: errorMessage,
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
+    setIsLoading(false);
   }
 
   return (

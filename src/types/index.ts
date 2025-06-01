@@ -2,14 +2,14 @@
 export type UserRole = 'superadmin' | 'admin' | 'kasir';
 
 export interface User {
-  id: string; // Corresponds to Firebase Auth UID
+  id: string; // Corresponds to Firebase Auth UID or mock ID
   name: string; // displayName
   email: string;
   role: UserRole;
   outlets?: string[]; // Outlet IDs kasir has access to
   status: 'active' | 'pending_approval' | 'inactive';
   merchantId?: string; // For kasir/admin, to associate with a merchant
-  createdAt?: any; // Firestore ServerTimestamp
+  // createdAt?: any; // Firestore ServerTimestamp - Removed for mock data
 }
 
 export interface Outlet {

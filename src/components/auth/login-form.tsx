@@ -17,9 +17,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Mail, Lock } from 'lucide-react';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation'; 
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { useRouter } from 'next/navigation';
+// import { signInWithEmailAndPassword } from 'firebase/auth';
+// import { auth } from '@/lib/firebase'; // Firebase import removed
 import { useToast } from '@/hooks/use-toast';
 
 const loginFormSchema = z.object({
@@ -44,39 +44,35 @@ export function LoginForm() {
 
   async function onSubmit(values: LoginFormValues) {
     setIsLoading(true);
-    try {
-      await signInWithEmailAndPassword(auth, values.email, values.password);
+    // Simulate API call
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Mock login logic
+    if (values.email === "test@example.com" && values.password === "password") {
       toast({
-        title: "Login Successful!",
+        title: "Login Successful! (Mock)",
         description: "Welcome back!",
       });
-      router.push("/dashboard"); // Redirect to dashboard after successful login
-    } catch (error: any) {
-      console.error("Firebase login error:", error);
-      let errorMessage = "An unexpected error occurred during login.";
-      if (error.code) {
-        switch (error.code) {
-          case 'auth/user-not-found':
-          case 'auth/wrong-password':
-          case 'auth/invalid-credential':
-            errorMessage = "Invalid email or password. Please try again.";
-            break;
-          case 'auth/invalid-email':
-            errorMessage = "The email address is not valid.";
-            break;
-          default:
-            errorMessage = "Failed to login. Please try again later.";
-            break;
-        }
-      }
+      // Store mock user in localStorage for app-header to pick up
+      localStorage.setItem('mockUser', JSON.stringify({ email: values.email, displayName: 'Test User' }));
+      router.push("/dashboard");
+    } else if (values.email === "super@tokoapp.com" && values.password === "password"){
+       toast({
+        title: "Login Successful! (Mock Superadmin)",
+        description: "Welcome Super Admin!",
+      });
+      localStorage.setItem('mockUser', JSON.stringify({ email: values.email, displayName: 'Super Admin', role: 'superadmin' }));
+      router.push("/admin/users");
+    }
+    
+    else {
       toast({
-        title: "Login Failed",
-        description: errorMessage,
+        title: "Login Failed (Mock)",
+        description: "Invalid email or password for mock login.",
         variant: "destructive",
       });
-    } finally {
-      setIsLoading(false);
     }
+    setIsLoading(false);
   }
 
   return (
@@ -96,10 +92,10 @@ export function LoginForm() {
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
                   <FormControl>
-                    <Input 
-                      type="email" 
-                      placeholder="you@example.com" 
-                      {...field} 
+                    <Input
+                      type="email"
+                      placeholder="you@example.com"
+                      {...field}
                       className="pl-10"
                       disabled={isLoading}
                     />
@@ -118,10 +114,10 @@ export function LoginForm() {
                  <div className="relative">
                   <Lock className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
                   <FormControl>
-                    <Input 
-                      type="password" 
-                      placeholder="••••••••" 
-                      {...field} 
+                    <Input
+                      type="password"
+                      placeholder="••••••••"
+                      {...field}
                       className="pl-10"
                       disabled={isLoading}
                     />

@@ -38,40 +38,51 @@ import {
 } from "@/components/ui/select";
 import Image from 'next/image';
 import React, { useEffect, useState } from 'react';
-import { auth } from '@/lib/firebase';
-import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
+// Firebase imports removed
+// import { auth } from '@/lib/firebase';
+// import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 
+// Mock user type
+interface MockUser {
+  email: string;
+  displayName: string;
+  role?: string;
+}
+
 export function AppHeader() {
   const { isMobile } = useSidebar();
-  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<MockUser | null>(null);
   const router = useRouter();
   const { toast } = useToast();
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-    });
-    return () => unsubscribe();
-  }, []);
+    // Check for mock user in localStorage
+    if (typeof window !== 'undefined') {
+      const storedUser = localStorage.getItem('mockUser');
+      if (storedUser) {
+        try {
+          setCurrentUser(JSON.parse(storedUser));
+        } catch (e) {
+          console.error("Failed to parse mock user from localStorage", e);
+          localStorage.removeItem('mockUser'); // Clear invalid data
+        }
+      }
+    }
+  }, [router]); // Re-check on route change for SPA-like updates
 
   const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      toast({
-        title: "Logged Out",
-        description: "You have been successfully logged out.",
-      });
-      router.push('/login');
-    } catch (error) {
-      console.error("Logout error:", error);
-      toast({
-        title: "Logout Failed",
-        description: "Could not log out. Please try again.",
-        variant: "destructive",
-      });
+    // Simulate logout
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('mockUser');
     }
+    setCurrentUser(null);
+    toast({
+      title: "Logged Out (Mock)",
+      description: "You have been successfully logged out.",
+    });
+    router.push('/login');
   };
 
   // Placeholder data for outlet selection - this should be dynamic later
