@@ -1,25 +1,23 @@
 
 'use client';
 
-import type { Metadata } from 'next';
 import React, { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { PlusCircle, Trash2, Search, DollarSign, QrCode, CreditCard, ShoppingCart } from 'lucide-react';
-import Image from 'next/image';
+import { Trash2, Search, DollarSign, QrCode, CreditCard, ShoppingCart } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
-// Mock product data
+// Mock product data without images
 const mockProducts = [
-  { id: 'prod_1', name: 'Kopi Susu Gula Aren', price: 18000, stock: 50, image: 'https://placehold.co/100x100.png', dataAiHint: 'coffee drink' },
-  { id: 'prod_2', name: 'Roti Coklat Keju', price: 10000, stock: 100, image: 'https://placehold.co/100x100.png', dataAiHint: 'chocolate bread' },
-  { id: 'prod_3', name: 'Air Mineral Botol', price: 5000, stock: 200, image: 'https://placehold.co/100x100.png', dataAiHint: 'water bottle' },
-  { id: 'prod_4', name: 'Teh Manis Hangat', price: 8000, stock: 70, image: 'https://placehold.co/100x100.png', dataAiHint: 'tea drink' },
-  { id: 'prod_5', name: 'Nasi Goreng Spesial', price: 25000, stock: 30, image: 'https://placehold.co/100x100.png', dataAiHint: 'fried rice' },
-  { id: 'prod_6', name: 'Kentang Goreng', price: 15000, stock: 60, image: 'https://placehold.co/100x100.png', dataAiHint: 'french fries' },
+  { id: 'prod_1', name: 'Kopi Susu Gula Aren', price: 18000, stock: 50 },
+  { id: 'prod_2', name: 'Roti Coklat Keju', price: 10000, stock: 100 },
+  { id: 'prod_3', name: 'Air Mineral Botol', price: 5000, stock: 200 },
+  { id: 'prod_4', name: 'Teh Manis Hangat', price: 8000, stock: 70 },
+  { id: 'prod_5', name: 'Nasi Goreng Spesial', price: 25000, stock: 30 },
+  { id: 'prod_6', name: 'Kentang Goreng', price: 15000, stock: 60 },
 ];
 
 interface CartItem {
@@ -127,16 +125,15 @@ export default function POSPage() {
                 <Button
                   key={product.id}
                   variant="outline"
-                  className="h-auto flex flex-col items-center justify-center p-3 gap-2 text-center shadow-sm hover:shadow-md transition-shadow"
+                  className="h-auto flex flex-col items-center justify-center p-4 gap-1.5 text-center shadow-sm hover:shadow-md transition-shadow"
                   onClick={() => addToCart(product)}
                   disabled={product.stock <= 0}
                 >
-                  <Image src={product.image} alt={product.name} width={80} height={80} className="rounded-md object-cover aspect-square" data-ai-hint={product.dataAiHint}/>
-                  <span className="text-xs font-medium line-clamp-2">{product.name}</span>
-                  <span className="text-xs text-primary font-semibold">
+                  <span className="text-sm font-semibold line-clamp-2">{product.name}</span>
+                  <span className="text-xs text-primary font-medium">
                     {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(product.price)}
                   </span>
-                  {product.stock <= 0 && <Badge variant="destructive" className="text-xs">Out of Stock</Badge>}
+                  {product.stock <= 0 && <Badge variant="destructive" className="text-xs mt-1">Out of Stock</Badge>}
                 </Button>
               ))}
                {filteredProducts.length === 0 && (
@@ -164,7 +161,6 @@ export default function POSPage() {
               <div className="space-y-3">
                 {cart.map((item) => (
                   <div key={item.product.id} className="flex items-center gap-3 p-2 rounded-md border hover:bg-muted/50">
-                    <Image src={item.product.image} alt={item.product.name} width={40} height={40} className="rounded-md object-cover aspect-square" data-ai-hint={item.product.dataAiHint}/>
                     <div className="flex-1">
                       <p className="text-sm font-medium">{item.product.name}</p>
                       <p className="text-xs text-muted-foreground">
