@@ -79,28 +79,8 @@ export function InventoryTable() {
           </TableHeader>
           <TableBody>
             {products.map((product) => {
-              // Determine which units to display based on user's preference
-              const hasSpecialDerivedUnit = product.units.some(u =>
-                !u.isBaseUnit && u.conversionFactor && ['dus', 'lusin'].includes(u.name.toLowerCase())
-              );
-
-              const unitsToDisplay = product.units.filter(unit => {
-                if (unit.isBaseUnit && hasSpecialDerivedUnit) {
-                  return false; // Hide base unit if a special derived unit (dus/lusin) exists for this product
-                }
-                return true; // Otherwise, show the unit
-              });
-
-              if (unitsToDisplay.length === 0 && product.units.length > 0) {
-                // Fallback: if filtering hid all units (e.g. only base unit existed with a special derived one, which is unusual), show original non-base units or all if only base.
-                // This case should ideally not happen if data is structured well, but as a safeguard:
-                const nonBaseUnits = product.units.filter(u => !u.isBaseUnit && u.conversionFactor);
-                if (nonBaseUnits.length > 0) {
-                    unitsToDisplay.push(...nonBaseUnits);
-                } else {
-                    unitsToDisplay.push(...product.units); // Show all if no clear non-base units to prioritize
-                }
-              }
+              // Display all units for each product
+              const unitsToDisplay = product.units;
               
               return unitsToDisplay.map((unit, displayUnitIndex) => (
                 <TableRow key={`${product.id}-${unit.name}`}>
