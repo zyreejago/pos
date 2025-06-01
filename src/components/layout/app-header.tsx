@@ -34,9 +34,9 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation'; 
 import { useToast } from '@/hooks/use-toast';
 import type { Outlet } from '@/types'; 
-import { db, auth } from '@/lib/firebase'; // Import auth
+import { db, auth } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { signOut } from 'firebase/auth'; // Import signOut
+import { signOut } from 'firebase/auth';
 
 interface StoredUser {
   id: string;
@@ -62,25 +62,45 @@ const getCurrentUser = (): StoredUser | null => {
   return null;
 };
 
+const OUTLETS_CACHE_KEY = 'outletsCacheKey'; // Key for localStorage communication
+
 export function AppHeader() {
   const { isMobile } = useSidebar();
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
   const [selectedOutletId, setSelectedOutletId] = useState<string | null>(null);
   const [availableOutlets, setAvailableOutlets] = useState<Outlet[]>([]);
   const [isLoadingOutlets, setIsLoadingOutlets] = useState(false);
+  const [outletsCacheKeyState, setOutletsCacheKeyState] = useState<string | null>(null); // To react to localStorage changes
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
 
+  // Effect for initializing from localStorage and setting up storage listener
   useEffect(() => {
     const user = getCurrentUser();
     setCurrentUser(user);
-    
+
     if (typeof window !== 'undefined') {
-      const storedOutletId = localStorage.getItem('selectedOutletId');
-      setSelectedOutletId(storedOutletId);
+      setSelectedOutletId(localStorage.getItem('selectedOutletId'));
+      setOutletsCacheKeyState(localStorage.getItem(OUTLETS_CACHE_KEY));
     }
-  }, [pathname]); 
+
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === OUTLETS_CACHE_KEY && event.storageArea === localStorage) {
+        console.log('[AppHeader] Storage event for OUTLETS_CACHE_KEY detected. New value:', event.newValue);
+        setOutletsCacheKeyState(event.newValue);
+      }
+      if (event.key === 'selectedOutletId' && event.storageArea === localStorage) {
+        console.log('[AppHeader] Storage event for selectedOutletId detected. New value:', event.newValue);
+        setSelectedOutletId(event.newValue);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []); // Run once on mount to initialize and set up listener
 
   const fetchOutletsForDropdown = useCallback(async () => {
     if (!currentUser || !currentUser.merchantId || currentUser.role === 'superadmin' || currentUser.status !== 'active') {
@@ -89,6 +109,7 @@ export function AppHeader() {
       return;
     }
     setIsLoadingOutlets(true);
+    console.log(`[AppHeader] Fetching outlets for dropdown. Merchant ID: ${currentUser.merchantId}`);
     try {
       const q = query(
         collection(db, "outlets"),
@@ -101,36 +122,48 @@ export function AppHeader() {
         fetchedOutlets.push({ id: doc.id, ...doc.data() } as Outlet);
       });
       setAvailableOutlets(fetchedOutlets);
+      console.log('[AppHeader] Fetched outlets for dropdown:', fetchedOutlets.map(o => o.name));
 
       // Validate selectedOutletId
-      if (selectedOutletId && !fetchedOutlets.some(o => o.id === selectedOutletId)) {
+      const currentSelectedOutletId = localStorage.getItem('selectedOutletId'); // Read fresh from localStorage
+      if (currentSelectedOutletId && !fetchedOutlets.some(o => o.id === currentSelectedOutletId)) {
+        console.log(`[AppHeader] Selected outlet ${currentSelectedOutletId} no longer valid or found. Clearing selection.`);
         localStorage.removeItem('selectedOutletId');
         localStorage.removeItem('selectedOutletName');
-        setSelectedOutletId(null);
-        // Don't redirect here, AppLayout should handle it or user is on select-outlet
+        setSelectedOutletId(null); // Update state to trigger re-render and clear dropdown selection
+      } else if (!currentSelectedOutletId && fetchedOutlets.length > 0 && pathname !== '/select-outlet') {
+        // If no outlet is selected but outlets are available, and not on selection page,
+        // it might imply user needs to select one, or we could auto-select first.
+        // For now, AppLayout handles redirection to /select-outlet if needed.
       }
+
 
     } catch (error) {
       console.error("Error fetching outlets for header: ", error);
-      // toast({ title: "Error", description: "Could not load outlets for selection.", variant: "destructive" });
+      toast({ title: "Error", description: "Could not load outlets for selection.", variant: "destructive" });
     }
     setIsLoadingOutlets(false);
-  }, [currentUser, selectedOutletId]);
+  }, [currentUser, toast]); // Removed selectedOutletId from here, effect below handles it
 
+  // Effect for fetching outlets when relevant state changes
   useEffect(() => {
-    if (currentUser) { // Fetch outlets if user data is available
+    if (currentUser) {
+      console.log('[AppHeader] Effect to fetch outlets triggered. User:', currentUser?.email, 'SelectedOutletId:', selectedOutletId, 'CacheKey:', outletsCacheKeyState, 'Pathname:', pathname);
       fetchOutletsForDropdown();
+    } else {
+      setAvailableOutlets([]); // Clear outlets if no user
     }
-  }, [currentUser, fetchOutletsForDropdown]);
+  }, [currentUser, selectedOutletId, outletsCacheKeyState, fetchOutletsForDropdown, pathname]); // Added pathname to re-fetch on navigation if needed
 
 
   const handleLogout = async () => {
     try {
-      await signOut(auth); // Sign out from Firebase Auth
+      await signOut(auth); 
       if (typeof window !== 'undefined') {
         localStorage.removeItem('mockUser');
         localStorage.removeItem('selectedOutletId');
         localStorage.removeItem('selectedOutletName');
+        localStorage.removeItem(OUTLETS_CACHE_KEY); // Clear cache key on logout
       }
       setCurrentUser(null);
       setSelectedOutletId(null);
@@ -155,12 +188,16 @@ export function AppHeader() {
     if (selectedOutletDetails && typeof window !== 'undefined') {
       localStorage.setItem('selectedOutletId', selectedOutletDetails.id);
       localStorage.setItem('selectedOutletName', selectedOutletDetails.name);
-      setSelectedOutletId(selectedOutletDetails.id);
+      setSelectedOutletId(selectedOutletDetails.id); // Directly update state
+
       toast({
         title: "Outlet Changed",
-        description: `Switched to ${selectedOutletDetails.name}. Refreshing...`,
+        description: `Switched to ${selectedOutletDetails.name}. Refreshing page...`,
       });
-       window.location.pathname = '/dashboard'; 
+      // Force a reload or navigate to ensure all components depending on selected outlet update correctly.
+      // Navigating to dashboard is a common pattern.
+      // Using window.location.href to ensure a full refresh which re-initializes states from localStorage.
+      window.location.href = '/dashboard'; 
     }
   };
 
@@ -191,7 +228,7 @@ export function AppHeader() {
             <Select 
               value={selectedOutletId || ""} 
               onValueChange={handleOutletChange}
-              disabled={availableOutlets.length === 0 || isLoadingOutlets}
+              disabled={availableOutlets.length === 0}
             >
               <SelectTrigger className="w-full md:w-[200px] lg:w-[280px] bg-background shadow-inner">
                 <div className="flex items-center gap-2">
@@ -205,7 +242,7 @@ export function AppHeader() {
                     {outlet.name}
                   </SelectItem>
                 )) : (
-                  <SelectItem value="no-outlets" disabled>No outlets available for this merchant</SelectItem>
+                  <SelectItem value="no-outlets" disabled>No outlets available</SelectItem>
                 )}
               </SelectContent>
             </Select>
@@ -215,7 +252,7 @@ export function AppHeader() {
       
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="rounded-full ml-auto"> {/* Added ml-auto if outlet selector is not shown */}
+            <Button variant="ghost" size="icon" className="rounded-full ml-auto">
               <CircleUser className="h-6 w-6" />
               <span className="sr-only">Toggle user menu</span>
             </Button>

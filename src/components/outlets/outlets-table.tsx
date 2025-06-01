@@ -58,6 +58,8 @@ const getCurrentUser = (): StoredUser | null => {
   return null;
 };
 
+const OUTLETS_CACHE_KEY = 'outletsCacheKey'; // Key for localStorage communication
+
 export function OutletsTable() {
   const [outlets, setOutlets] = useState<Outlet[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -78,39 +80,39 @@ export function OutletsTable() {
     console.log('[OutletsTable] User check completed. Current user:', user);
   }, []);
 
-  useEffect(() => {
-    const fetchOutlets = async () => {
-      if (!componentCurrentUser || !componentCurrentUser.merchantId) {
-        console.log('[OutletsTable] fetchOutlets: Pre-conditions not met (no currentUser or merchantId). Bailing.', componentCurrentUser);
-        setIsLoading(false);
-        setOutlets([]);
-        return;
-      }
-      console.log(`[OutletsTable] fetchOutlets: Fetching for merchantId: ${componentCurrentUser.merchantId}. Setting isLoading to true.`);
-      setIsLoading(true);
-      try {
-        const q = query(
-          collection(db, "outlets"),
-          where("merchantId", "==", componentCurrentUser.merchantId),
-          orderBy("createdAt", "desc")
-        );
-        const querySnapshot = await getDocs(q);
-        const fetchedOutlets: Outlet[] = [];
-        querySnapshot.forEach((doc) => {
-          fetchedOutlets.push({ id: doc.id, ...doc.data() } as Outlet);
-        });
-        console.log('[OutletsTable] fetchOutlets: Fetched outlets:', fetchedOutlets);
-        setOutlets(fetchedOutlets);
-      } catch (error) {
-        console.error("[OutletsTable] Error fetching outlets: ", error);
-        toast({ title: "Fetch Failed", description: "Could not fetch outlets data.", variant: "destructive" });
-        setOutlets([]);
-      } finally {
-        console.log('[OutletsTable] fetchOutlets: Setting isLoading to false in finally block.');
-        setIsLoading(false);
-      }
-    };
+  const fetchOutlets = useCallback(async () => {
+    if (!componentCurrentUser || !componentCurrentUser.merchantId) {
+      console.log('[OutletsTable] fetchOutlets: Pre-conditions not met (no currentUser or merchantId). Bailing.', componentCurrentUser);
+      setIsLoading(false);
+      setOutlets([]);
+      return;
+    }
+    console.log(`[OutletsTable] fetchOutlets: Fetching for merchantId: ${componentCurrentUser.merchantId}. Setting isLoading to true.`);
+    setIsLoading(true);
+    try {
+      const q = query(
+        collection(db, "outlets"),
+        where("merchantId", "==", componentCurrentUser.merchantId),
+        orderBy("createdAt", "desc")
+      );
+      const querySnapshot = await getDocs(q);
+      const fetchedOutlets: Outlet[] = [];
+      querySnapshot.forEach((doc) => {
+        fetchedOutlets.push({ id: doc.id, ...doc.data() } as Outlet);
+      });
+      console.log('[OutletsTable] fetchOutlets: Fetched outlets:', fetchedOutlets);
+      setOutlets(fetchedOutlets);
+    } catch (error) {
+      console.error("[OutletsTable] Error fetching outlets: ", error);
+      toast({ title: "Fetch Failed", description: "Could not fetch outlets data.", variant: "destructive" });
+      setOutlets([]);
+    } finally {
+      console.log('[OutletsTable] fetchOutlets: Setting isLoading to false in finally block.');
+      setIsLoading(false);
+    }
+  }, [componentCurrentUser, toast]);
 
+  useEffect(() => {
     console.log('[OutletsTable] Outlets fetch useEffect triggered. userCheckCompleted:', userCheckCompleted, 'componentCurrentUser:', componentCurrentUser);
     if (userCheckCompleted && componentCurrentUser) {
       if (componentCurrentUser.merchantId) {
@@ -126,41 +128,37 @@ export function OutletsTable() {
       setIsLoading(false);
       setOutlets([]);
     }
-  }, [userCheckCompleted, componentCurrentUser, toast]);
+  }, [userCheckCompleted, componentCurrentUser, fetchOutlets]);
 
 
   useEffect(() => {
-    // Log isFormOpen whenever it changes
     console.log("[OutletsTable] isFormOpen state changed to:", isFormOpen);
   }, [isFormOpen]);
 
+  const signalOutletListChange = () => {
+    const newCacheKeyValue = Date.now().toString();
+    localStorage.setItem(OUTLETS_CACHE_KEY, newCacheKeyValue);
+    // Manually dispatch a storage event so the AppHeader in the current tab also picks it up
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: OUTLETS_CACHE_KEY,
+      newValue: newCacheKeyValue,
+      storageArea: localStorage,
+    }));
+    console.log(`[OutletsTable] Signaled outlet list change with cache key: ${newCacheKeyValue}`);
+  };
+
   const handleSaveSuccess = () => {
-    if (userCheckCompleted && componentCurrentUser && componentCurrentUser.merchantId) {
-      // Re-fetch outlets after save
-      const fetchAgain = async () => {
-        setIsLoading(true);
-        try {
-          const q = query(collection(db, "outlets"), where("merchantId", "==", componentCurrentUser.merchantId), orderBy("createdAt", "desc"));
-          const querySnapshot = await getDocs(q);
-          const fetchedOutlets: Outlet[] = [];
-          querySnapshot.forEach((doc) => fetchedOutlets.push({ id: doc.id, ...doc.data() } as Outlet));
-          setOutlets(fetchedOutlets);
-        } catch (error) {
-          toast({ title: "Refresh Failed", description: "Could not refresh outlets list.", variant: "destructive" });
-        } finally {
-          setIsLoading(false);
-        }
-      };
-      fetchAgain();
-    }
+    console.log("[OutletsTable] handleSaveSuccess called.");
+    fetchOutlets(); // Re-fetch for this table's view
+    signalOutletListChange(); // Signal AppHeader to update its outlets list
+    setIsFormOpen(false); // Close the dialog
   };
 
   const openNewDialog = () => {
     console.log("[OutletsTable] openNewDialog called.");
     setEditingOutlet(undefined);
     setIsFormOpen(true);
-    // Note: The actual state update and re-render is asynchronous.
-    // The log for isFormOpen changing will appear due to the useEffect watching it.
+    console.log("[OutletsTable] isFormOpen set to true by openNewDialog.");
   };
 
   const openEditDialog = (outlet: Outlet) => {
@@ -179,14 +177,23 @@ export function OutletsTable() {
       try {
         await deleteDoc(doc(db, "outlets", outletToDelete.id));
         toast({ title: "Outlet Deleted", description: `Outlet ${outletToDelete.name} has been deleted.`});
-        handleSaveSuccess(); // Re-fetch after delete
+        
         if (typeof window !== 'undefined') {
             const selectedOutletId = localStorage.getItem('selectedOutletId');
             if (selectedOutletId === outletToDelete.id) {
                 localStorage.removeItem('selectedOutletId');
                 localStorage.removeItem('selectedOutletName');
+                // Manually dispatch event for selectedOutletId change for AppHeader
+                window.dispatchEvent(new StorageEvent('storage', {
+                  key: 'selectedOutletId',
+                  newValue: null, // Indicate it's removed
+                  storageArea: localStorage,
+                }));
             }
         }
+        fetchOutlets(); // Re-fetch for this table's view
+        signalOutletListChange(); // Signal AppHeader to update its outlets list
+
       } catch (error) {
         console.error("Error deleting outlet: ", error);
         toast({ title: "Delete Failed", description: "Could not delete outlet. Please try again.", variant: "destructive" });
@@ -200,35 +207,33 @@ export function OutletsTable() {
     return (
       <div className="flex flex-col items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-        <p className="text-muted-foreground">Initializing...</p>
+        <p className="text-muted-foreground">Initializing user data...</p>
       </div>
     );
   }
-
+  
   const canAddOutlet = userCheckCompleted && componentCurrentUser && componentCurrentUser.merchantId;
 
   const addOutletButton = (
-    <Button onClick={openNewDialog} disabled={!canAddOutlet || isLoading}>
+    <Button onClick={openNewDialog} disabled={!userCheckCompleted || isLoading || !componentCurrentUser?.merchantId}>
       <PlusCircle className="mr-2 h-4 w-4" /> Add Outlet
     </Button>
   );
 
-  if (!componentCurrentUser) {
+  if (!componentCurrentUser && userCheckCompleted) {
      return (
       <>
         <div className="flex justify-end mb-4">
            {addOutletButton}
         </div>
         <div className="flex flex-col items-center justify-center h-64">
-          <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-          <p className="text-muted-foreground">Loading user data...</p>
-          <p className="text-sm text-muted-foreground">If this persists, please try logging in again.</p>
+          <p className="text-muted-foreground">User data not available. Please log in.</p>
         </div>
       </>
     );
   }
 
-  if (!componentCurrentUser.merchantId && userCheckCompleted) {
+  if (!componentCurrentUser?.merchantId && userCheckCompleted) {
     return (
       <>
         <div className="flex justify-end mb-4">
@@ -248,13 +253,12 @@ export function OutletsTable() {
       <div className="flex justify-end mb-4">
         {addOutletButton}
       </div>
-      {isLoading && outlets.length === 0 && ( // Show loader only if truly loading initial data
+      {isLoading && outlets.length === 0 ? ( 
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="ml-2 text-muted-foreground">Loading outlets...</p>
         </div>
-      )}
-      {!isLoading && (
+      ) : (
         <div className="rounded-lg border shadow-sm bg-card">
           <Table>
             <TableHeader>
@@ -265,7 +269,7 @@ export function OutletsTable() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {outlets.map((outlet) => (
+              {outlets.length > 0 ? outlets.map((outlet) => (
                 <TableRow key={outlet.id}>
                   <TableCell className="font-medium">{outlet.name}</TableCell>
                   <TableCell>
@@ -294,8 +298,7 @@ export function OutletsTable() {
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))}
-              {outlets.length === 0 && (
+              )) : (
                 <TableRow>
                   <TableCell colSpan={3} className="h-24 text-center text-muted-foreground">
                     No outlets found. Start by adding a new outlet.
@@ -325,14 +328,10 @@ export function OutletsTable() {
         </AlertDialogContent>
       </AlertDialog>
       
-      {/* This rendering logic seems correct: if isFormOpen is true, dialog should be attempted to render */}
       {isFormOpen && (
         <OutletFormDialog
           outlet={editingOutlet}
-          onSaveSuccess={() => {
-            handleSaveSuccess();
-            setIsFormOpen(false); // Explicitly close form on success from here
-          }}
+          onSaveSuccess={handleSaveSuccess}
           isOpenProp={isFormOpen}
           onOpenChangeProp={setIsFormOpen}
         />
