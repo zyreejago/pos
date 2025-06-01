@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -12,58 +12,92 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, TrendingUp, TrendingDown } from "lucide-react";
-import type { Product, Supplier } from "@/types"; // Assuming Product type is relevant
+import { Edit, TrendingUp, TrendingDown, Loader2 } from "lucide-react";
+import type { Product } from "@/types";
 import { useToast } from "@/hooks/use-toast";
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+
 // Placeholder for a potential stock adjustment dialog
 // import { StockAdjustmentDialog } from './stock-adjustment-dialog';
 
-// Temporary mock data, ideally this should come from a shared localStorage source
-const mockProductsData: Product[] = [
-  {
-    id: "prod_1",
-    name: "Kopi Susu Gula Aren",
-    barcode: "8991234567890",
-    supplierId: "sup_1",
-    buyOwn: false,
-    units: [{ name: "pcs", price: 18000, stock: 50, isBaseUnit: true }],
-    merchantId: "merch_1",
-  },
-  {
-    id: "prod_2",
-    name: "Roti Coklat Keju",
-    units: [
-        { name: "pcs", price: 10000, stock: 100, isBaseUnit: true },
-        { name: "lusin", price: 110000, stock: 8, conversionFactor: 12 }
-    ],
-    merchantId: "merch_1",
-  },
-  {
-    id: "prod_3",
-    name: "Air Mineral Botol",
-    barcode: "8990000111222",
-    supplierId: "sup_2",
-    units: [
-        { name: "botol", price: 5000, stock: 200, isBaseUnit: true },
-        { name: "dus", price: 90000, stock: 15, conversionFactor: 24 }
-    ],
-    merchantId: "merch_1",
-  },
-   { id: 'prod_4', name: 'Teh Manis Hangat', units: [{name: 'pcs', price: 8000, stock: 70, isBaseUnit: true}], merchantId: 'merch_1' },
-   { id: 'prod_5', name: 'Nasi Goreng Spesial', units: [{name: 'pcs', price: 25000, stock: 30, isBaseUnit: true}], merchantId: 'merch_1' },
-   { id: 'prod_6', name: 'Kentang Goreng', units: [{name: 'pcs', price: 15000, stock: 60, isBaseUnit: true}], merchantId: 'merch_1' },
-];
+interface StoredUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role?: string;
+  merchantId?: string;
+}
+
+const getCurrentUser = (): StoredUser | null => {
+  if (typeof window !== 'undefined') {
+    const storedUserStr = localStorage.getItem('mockUser');
+    if (storedUserStr) {
+      try {
+        return JSON.parse(storedUserStr) as StoredUser;
+      } catch (e) {
+        console.error("Failed to parse user from localStorage in InventoryTable", e);
+        return null;
+      }
+    }
+  }
+  return null;
+};
 
 
 export function InventoryTable() {
-  const [products, setProducts] = useState<Product[]>(mockProductsData);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [adjustingProductUnit, setAdjustingProductUnit] = useState<{productId: string, unitName: string} | null>(null);
   const { toast } = useToast();
+  const currentUser = getCurrentUser();
+
+  const fetchProducts = useCallback(async () => {
+    if (!currentUser || !currentUser.merchantId) {
+      setIsLoading(false);
+      setProducts([]);
+      // toast({ title: "Error", description: "Merchant information not found. Cannot load inventory.", variant: "destructive" });
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const q = query(
+        collection(db, "products"),
+        where("merchantId", "==", currentUser.merchantId),
+        orderBy("name", "asc") // Order by product name
+      );
+      const querySnapshot = await getDocs(q);
+      const fetchedProducts: Product[] = [];
+      querySnapshot.forEach((doc) => {
+        fetchedProducts.push({ id: doc.id, ...doc.data() } as Product);
+      });
+      setProducts(fetchedProducts);
+    } catch (error) {
+      console.error("Error fetching products for inventory: ", error);
+      toast({ title: "Fetch Failed", description: "Could not fetch inventory data.", variant: "destructive" });
+      setProducts([]);
+    }
+    setIsLoading(false);
+  }, [currentUser, toast]);
+
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
 
   const handleOpenAdjustmentDialog = (productId: string, unitName: string) => {
     setAdjustingProductUnit({ productId, unitName });
-    toast({ title: "Info", description: `Fitur penyesuaian stok untuk ${unitName} produk ${productId} belum diimplementasikan.`})
+    const productName = products.find(p => p.id === productId)?.name || 'Product';
+    toast({ title: "Info", description: `Stock adjustment feature for ${unitName} of ${productName} is not yet implemented.`})
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Loading inventory data...</p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -79,14 +113,19 @@ export function InventoryTable() {
           </TableHeader>
           <TableBody>
             {products.map((product) => {
-              const hasBaseUnit = product.units.some(unit => unit.isBaseUnit);
-              const hasDerivedUnit = product.units.some(unit => !unit.isBaseUnit && unit.conversionFactor && unit.conversionFactor > 1);
+              const baseUnit = product.units.find(unit => unit.isBaseUnit);
+              const hasDerivedUnits = product.units.some(unit => !unit.isBaseUnit && unit.conversionFactor && unit.conversionFactor > 1);
 
               let unitsToDisplay = product.units;
-              if (hasBaseUnit && hasDerivedUnit) {
+
+              // If a product has a base unit AND derived units, only show the base unit.
+              if (baseUnit && hasDerivedUnits) {
                 unitsToDisplay = product.units.filter(unit => unit.isBaseUnit);
               }
-              
+              // If no specific base unit marked but multiple units exist, show all (or could default to first, but current logic shows all if no explicit single base unit preference)
+              // For simplicity with current rules: if multiple units and one is base, show base. Otherwise show all.
+              // If only one unit, it's always displayed.
+
               return unitsToDisplay.map((unit, displayUnitIndex) => (
                 <TableRow key={`${product.id}-${unit.name}`}>
                   {displayUnitIndex === 0 ? (
@@ -97,8 +136,8 @@ export function InventoryTable() {
                   <TableCell className="py-3">{unit.name}</TableCell>
                   <TableCell className="text-right py-3">{unit.stock}</TableCell>
                   <TableCell className="text-center py-3">
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="sm"
                       onClick={() => handleOpenAdjustmentDialog(product.id, unit.name)}
                     >
@@ -108,17 +147,17 @@ export function InventoryTable() {
                 </TableRow>
               ));
             })}
-            {products.length === 0 && (
+            {products.length === 0 && !isLoading && (
               <TableRow>
                 <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  Tidak ada produk untuk ditampilkan. Tambahkan produk terlebih dahulu.
+                  Tidak ada produk dalam inventaris. Tambahkan produk terlebih dahulu.
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
       </div>
-      {/* 
+      {/*
       {adjustingProductUnit && (
         <StockAdjustmentDialog
           productName={products.find(p => p.id === adjustingProductUnit.productId)?.name || ''}
