@@ -1,3 +1,4 @@
+
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,10 +16,12 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { SystemSettings } from "@/types";
-import { Percent, Tag } from "lucide-react";
-import { useState } from "react";
+import type { SystemSettings, User } from "@/types";
+import { Percent, Tag, Loader2 } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { db } from '@/lib/firebase';
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
 const settingsFormSchema = z.object({
   ppnRate: z.coerce.number().min(0, "PPN rate must be non-negative.").max(100, "PPN rate cannot exceed 100."),
@@ -27,35 +30,105 @@ const settingsFormSchema = z.object({
 
 type SettingsFormValues = z.infer<typeof settingsFormSchema>;
 
-// Mock current settings
-const currentSettings: SystemSettings = {
-  ppnRate: 11, // 11%
-  discountRate: 5, // 5%
+interface StoredUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role?: string;
+  merchantId?: string;
+}
+
+const getCurrentUser = (): StoredUser | null => {
+  if (typeof window !== 'undefined') {
+    const storedUserStr = localStorage.getItem('mockUser');
+    if (storedUserStr) {
+      try {
+        return JSON.parse(storedUserStr) as StoredUser;
+      } catch (e) {
+        console.error("Failed to parse user from localStorage", e);
+        return null;
+      }
+    }
+  }
+  return null;
+};
+
+const defaultSettings: SettingsFormValues = {
+  ppnRate: 0,
+  discountRate: 0,
 };
 
 export function SettingsForm() {
   const [isLoading, setIsLoading] = useState(false);
+  const [isFetching, setIsFetching] = useState(true);
   const { toast } = useToast();
+  const currentUser = getCurrentUser();
 
   const form = useForm<SettingsFormValues>({
     resolver: zodResolver(settingsFormSchema),
-    defaultValues: currentSettings,
+    defaultValues: defaultSettings, // Initialize with defaults
   });
 
+  const fetchSettings = useCallback(async () => {
+    if (!currentUser || !currentUser.merchantId) {
+      toast({ title: "Error", description: "Merchant information not found.", variant: "destructive" });
+      setIsFetching(false);
+      form.reset(defaultSettings); // Reset to default if no merchantId
+      return;
+    }
+
+    setIsFetching(true);
+    try {
+      const settingsRef = doc(db, "settings", currentUser.merchantId);
+      const docSnap = await getDoc(settingsRef);
+
+      if (docSnap.exists()) {
+        form.reset(docSnap.data() as SettingsFormValues);
+      } else {
+        // No settings document exists, use default values
+        form.reset(defaultSettings);
+        console.log("No settings document found for merchant, using defaults.");
+      }
+    } catch (error) {
+      console.error("Error fetching settings:", error);
+      toast({ title: "Fetch Failed", description: "Could not load system settings.", variant: "destructive" });
+      form.reset(defaultSettings); // Reset to default on error
+    }
+    setIsFetching(false);
+  }, [currentUser, form, toast]);
+
+  useEffect(() => {
+    fetchSettings();
+  }, [fetchSettings]);
+
   async function onSubmit(values: SettingsFormValues) {
+    if (!currentUser || !currentUser.merchantId) {
+      toast({ title: "Error", description: "Cannot save settings. Merchant information missing.", variant: "destructive" });
+      return;
+    }
     setIsLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    console.log("Settings updated:", values);
-    // Update currentSettings mock (in a real app, this would be state or refetched)
-    currentSettings.ppnRate = values.ppnRate;
-    currentSettings.discountRate = values.discountRate;
-    
+    try {
+      const settingsRef = doc(db, "settings", currentUser.merchantId);
+      await setDoc(settingsRef, values, { merge: true }); // Use setDoc with merge to create or update
+
+      toast({
+        title: "Settings Saved!",
+        description: "Your PPN and discount rates have been updated.",
+      });
+    } catch (error) {
+      console.error("Error saving settings:", error);
+      toast({ title: "Save Failed", description: "Could not save system settings.", variant: "destructive" });
+    }
     setIsLoading(false);
-    toast({
-      title: "Settings Saved!",
-      description: "Your PPN and discount rates have been updated.",
-    });
+  }
+
+  if (isFetching) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="ml-2 text-muted-foreground">Loading settings...</p>
+      </div>
+    );
   }
 
   return (
@@ -108,7 +181,7 @@ export function SettingsForm() {
               )}
             />
             <div className="flex justify-end">
-              <Button type="submit" className="font-headline" disabled={isLoading}>
+              <Button type="submit" className="font-headline" disabled={isLoading || !currentUser?.merchantId}>
                 {isLoading ? "Saving..." : "Save Settings"}
               </Button>
             </div>
