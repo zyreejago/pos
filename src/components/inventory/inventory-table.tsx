@@ -79,8 +79,13 @@ export function InventoryTable() {
           </TableHeader>
           <TableBody>
             {products.map((product) => {
-              // Display all units for each product
-              const unitsToDisplay = product.units;
+              const hasBaseUnit = product.units.some(unit => unit.isBaseUnit);
+              const hasDerivedUnit = product.units.some(unit => !unit.isBaseUnit && unit.conversionFactor && unit.conversionFactor > 1);
+
+              let unitsToDisplay = product.units;
+              if (hasBaseUnit && hasDerivedUnit) {
+                unitsToDisplay = product.units.filter(unit => unit.isBaseUnit);
+              }
               
               return unitsToDisplay.map((unit, displayUnitIndex) => (
                 <TableRow key={`${product.id}-${unit.name}`}>
