@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from 'next/link';
@@ -18,6 +19,9 @@ import { User, Mail, Lock } from 'lucide-react';
 import { useState } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from 'next/navigation';
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { auth } from '@/lib/firebase';
+
 
 const registerFormSchema = z.object({
   merchantName: z.string().min(2, { message: "Merchant name must be at least 2 characters." }),
@@ -48,17 +52,46 @@ export function RegisterForm() {
 
   async function onSubmit(values: RegisterFormValues) {
     setIsLoading(true);
-    // Simulate API call for registration
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    console.log("Registration submitted with:", values);
-    setIsLoading(false);
-    toast({
-      title: "Registration Successful!",
-      description: "Your account has been created. Please wait for superadmin approval.",
-      variant: "default",
-    });
-    // Redirect to login or a pending approval page
-    router.push("/login");
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
+      // Update user profile with merchant name as displayName
+      if (userCredential.user) {
+        await updateProfile(userCredential.user, {
+          displayName: values.merchantName,
+        });
+      }
+      toast({
+        title: "Registration Successful!",
+        description: "Your account has been created. You can now log in.",
+      });
+      router.push("/login");
+    } catch (error: any) {
+      console.error("Firebase registration error:", error);
+      let errorMessage = "An unexpected error occurred during registration.";
+       if (error.code) {
+        switch (error.code) {
+          case 'auth/email-already-in-use':
+            errorMessage = "This email address is already in use.";
+            break;
+          case 'auth/invalid-email':
+            errorMessage = "The email address is not valid.";
+            break;
+          case 'auth/weak-password':
+            errorMessage = "The password is too weak.";
+            break;
+          default:
+            errorMessage = "Failed to register. Please try again later.";
+            break;
+        }
+      }
+      toast({
+        title: "Registration Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
@@ -74,11 +107,11 @@ export function RegisterForm() {
             name="merchantName"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-foreground">Merchant Name</FormLabel>
+                <FormLabel className="text-foreground">Merchant Name / Your Name</FormLabel>
                 <div className="relative">
                   <User className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
                   <FormControl>
-                    <Input placeholder="Your Business Name" {...field} className="pl-10" disabled={isLoading} />
+                    <Input placeholder="Your Business or Full Name" {...field} className="pl-10" disabled={isLoading} />
                   </FormControl>
                 </div>
                 <FormMessage />

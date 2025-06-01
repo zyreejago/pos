@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from 'next/link';
@@ -36,13 +37,44 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import Image from 'next/image';
+import React, { useEffect, useState } from 'react';
+import { auth } from '@/lib/firebase';
+import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
+import { useRouter } from 'next/navigation';
+import { useToast } from '@/hooks/use-toast';
 
 export function AppHeader() {
   const { isMobile } = useSidebar();
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const router = useRouter();
+  const { toast } = useToast();
 
-  // Placeholder data
-  const userName = "Admin User";
-  const userEmail = "admin@example.com";
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      toast({
+        title: "Logged Out",
+        description: "You have been successfully logged out.",
+      });
+      router.push('/login');
+    } catch (error) {
+      console.error("Logout error:", error);
+      toast({
+        title: "Logout Failed",
+        description: "Could not log out. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Placeholder data for outlet selection - this should be dynamic later
   const outlets = [
     { id: "1", name: "Main Outlet" },
     { id: "2", name: "Branch A" },
@@ -90,38 +122,57 @@ export function AppHeader() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64">
-            <DropdownMenuLabel className="font-normal">
-              <div className="flex flex-col space-y-1">
-                <p className="text-sm font-medium leading-none font-headline">{userName}</p>
-                <p className="text-xs leading-none text-muted-foreground">
-                  {userEmail}
-                </p>
-              </div>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link href="/dashboard/profile" className="flex items-center gap-2 cursor-pointer">
-                <CircleUser className="h-4 w-4" />
-                <span>Profile</span>
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-               <Link href="/settings" className="flex items-center gap-2 cursor-pointer">
-                <SettingsIcon className="h-4 w-4" />
-                <span>Settings</span>
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem className="flex items-center gap-2 cursor-pointer">
-              <LifeBuoy className="h-4 w-4" />
-              <span>Support</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link href="/login" className="flex items-center gap-2 cursor-pointer text-red-600 hover:!text-red-600 focus:text-red-600 dark:text-red-500 dark:hover:!text-red-500 dark:focus:text-red-500">
-                <LogOut className="h-4 w-4"/>
-                <span>Log out</span>
-              </Link>
-            </DropdownMenuItem>
+            {currentUser ? (
+              <>
+                <DropdownMenuLabel className="font-normal">
+                  <div className="flex flex-col space-y-1">
+                    <p className="text-sm font-medium leading-none font-headline">
+                      {currentUser.displayName || currentUser.email?.split('@')[0] || "User"}
+                    </p>
+                    <p className="text-xs leading-none text-muted-foreground">
+                      {currentUser.email}
+                    </p>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/profile" className="flex items-center gap-2 cursor-pointer">
+                    <CircleUser className="h-4 w-4" />
+                    <span>Profile</span>
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                   <Link href="/settings" className="flex items-center gap-2 cursor-pointer">
+                    <SettingsIcon className="h-4 w-4" />
+                    <span>Settings</span>
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer">
+                  <LifeBuoy className="h-4 w-4" />
+                  <span>Support</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleLogout} className="flex items-center gap-2 cursor-pointer text-red-600 hover:!text-red-600 focus:text-red-600 dark:text-red-500 dark:hover:!text-red-500 dark:focus:text-red-500">
+                  <LogOut className="h-4 w-4"/>
+                  <span>Log out</span>
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <>
+                <DropdownMenuItem asChild>
+                  <Link href="/login" className="flex items-center gap-2 cursor-pointer">
+                     <LogOut className="h-4 w-4" />
+                    <span>Login</span>
+                  </Link>
+                </DropdownMenuItem>
+                 <DropdownMenuItem asChild>
+                  <Link href="/register" className="flex items-center gap-2 cursor-pointer">
+                     <CircleUser className="h-4 w-4" />
+                    <span>Register</span>
+                  </Link>
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

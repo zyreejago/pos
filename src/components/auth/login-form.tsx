@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from 'next/link';
@@ -17,6 +18,9 @@ import { Input } from "@/components/ui/input";
 import { Mail, Lock } from 'lucide-react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation'; 
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '@/lib/firebase';
+import { useToast } from '@/hooks/use-toast';
 
 const loginFormSchema = z.object({
   email: z.string().email({ message: "Please enter a valid email address." }),
@@ -28,6 +32,7 @@ type LoginFormValues = z.infer<typeof loginFormSchema>;
 export function LoginForm() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const { toast } = useToast();
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginFormSchema),
@@ -39,16 +44,38 @@ export function LoginForm() {
 
   async function onSubmit(values: LoginFormValues) {
     setIsLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    console.log("Login submitted with:", values);
-    setIsLoading(false);
-    // On successful login, redirect to dashboard
-    // This is a placeholder. Actual auth logic would handle this.
-    if (values.email.startsWith("superadmin")) {
-       router.push("/admin/users");
-    } else {
-       router.push("/dashboard");
+    try {
+      await signInWithEmailAndPassword(auth, values.email, values.password);
+      toast({
+        title: "Login Successful!",
+        description: "Welcome back!",
+      });
+      router.push("/dashboard"); // Redirect to dashboard after successful login
+    } catch (error: any) {
+      console.error("Firebase login error:", error);
+      let errorMessage = "An unexpected error occurred during login.";
+      if (error.code) {
+        switch (error.code) {
+          case 'auth/user-not-found':
+          case 'auth/wrong-password':
+          case 'auth/invalid-credential':
+            errorMessage = "Invalid email or password. Please try again.";
+            break;
+          case 'auth/invalid-email':
+            errorMessage = "The email address is not valid.";
+            break;
+          default:
+            errorMessage = "Failed to login. Please try again later.";
+            break;
+        }
+      }
+      toast({
+        title: "Login Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -105,10 +132,6 @@ export function LoginForm() {
             )}
           />
           <div className="flex items-center justify-between text-sm">
-            {/* <div className="flex items-center gap-2">
-              <Checkbox id="remember-me" disabled={isLoading}/>
-              <Label htmlFor="remember-me" className="text-muted-foreground">Remember me</Label>
-            </div> */}
             <Link href="#" className="font-medium text-primary hover:underline hover:text-accent transition-colors">
               Forgot password?
             </Link>
