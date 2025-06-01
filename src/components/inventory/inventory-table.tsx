@@ -29,7 +29,7 @@ interface StoredUser {
   merchantId?: string;
 }
 
-const getCurrentUser = (): StoredUser | null => {
+const getCurrentUserFromStorage = (): StoredUser | null => {
   if (typeof window !== 'undefined') {
     const storedUserStr = localStorage.getItem('mockUser');
     if (storedUserStr) {
@@ -50,20 +50,26 @@ export function InventoryTable() {
   const [isLoading, setIsLoading] = useState(true);
   const [adjustingProductUnit, setAdjustingProductUnit] = useState<{productId: string, unitName: string} | null>(null);
   const { toast } = useToast();
-  const currentUser = getCurrentUser();
+  
+  const [localCurrentUser, setLocalCurrentUser] = useState<StoredUser | null>(null);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+    setLocalCurrentUser(getCurrentUserFromStorage());
+  }, []);
 
   const fetchProducts = useCallback(async () => {
-    if (!currentUser || !currentUser.merchantId) {
-      setIsLoading(false);
+    if (!localCurrentUser || !localCurrentUser.merchantId) {
       setProducts([]);
-      // toast({ title: "Error", description: "Merchant information not found. Cannot load inventory.", variant: "destructive" });
+      setIsLoading(false);
       return;
     }
     setIsLoading(true);
     try {
       const q = query(
         collection(db, "products"),
-        where("merchantId", "==", currentUser.merchantId),
+        where("merchantId", "==", localCurrentUser.merchantId),
         orderBy("name", "asc") // Order by product name
       );
       const querySnapshot = await getDocs(q);
@@ -78,11 +84,24 @@ export function InventoryTable() {
       setProducts([]);
     }
     setIsLoading(false);
-  }, [currentUser, toast]);
+  }, [localCurrentUser, toast]);
 
   useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
+    if (isClient) {
+      if (localCurrentUser && localCurrentUser.merchantId) {
+        fetchProducts();
+      } else {
+        // Client side, but no user or no merchantId, stop loading and clear products
+        setIsLoading(false);
+        setProducts([]);
+        if (!localCurrentUser) {
+            // toast({ title: "Info", description: "Please log in to view inventory.", variant: "default" });
+        } else if(!localCurrentUser.merchantId) {
+            // toast({ title: "Info", description: "User account not associated with a merchant.", variant: "default" });
+        }
+      }
+    }
+  }, [isClient, localCurrentUser, fetchProducts]);
 
   const handleOpenAdjustmentDialog = (productId: string, unitName: string) => {
     setAdjustingProductUnit({ productId, unitName });
@@ -90,14 +109,31 @@ export function InventoryTable() {
     toast({ title: "Info", description: `Stock adjustment feature for ${unitName} of ${productName} is not yet implemented.`})
   };
 
-  if (isLoading) {
+  if (!isClient || (isLoading && products.length === 0 && localCurrentUser)) { // Show initial loader or loading state
     return (
       <div className="flex flex-col items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-        <p className="text-muted-foreground">Loading inventory data...</p>
+        <p className="text-muted-foreground">{!isClient ? "Initializing..." : "Loading inventory data..."}</p>
       </div>
     );
   }
+
+  if (isClient && !localCurrentUser) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <p className="text-muted-foreground">Please log in to view inventory.</p>
+      </div>
+    );
+  }
+  
+  if (isClient && localCurrentUser && !localCurrentUser.merchantId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <p className="text-muted-foreground">Your account is not associated with a merchant. Cannot load inventory.</p>
+      </div>
+    );
+  }
+
 
   return (
     <>
@@ -118,14 +154,10 @@ export function InventoryTable() {
 
               let unitsToDisplay = product.units;
 
-              // If a product has a base unit AND derived units, only show the base unit.
               if (baseUnit && hasDerivedUnits) {
                 unitsToDisplay = product.units.filter(unit => unit.isBaseUnit);
               }
-              // If no specific base unit marked but multiple units exist, show all (or could default to first, but current logic shows all if no explicit single base unit preference)
-              // For simplicity with current rules: if multiple units and one is base, show base. Otherwise show all.
-              // If only one unit, it's always displayed.
-
+              
               return unitsToDisplay.map((unit, displayUnitIndex) => (
                 <TableRow key={`${product.id}-${unit.name}`}>
                   {displayUnitIndex === 0 ? (
@@ -173,3 +205,5 @@ export function InventoryTable() {
     </>
   );
 }
+
+    
