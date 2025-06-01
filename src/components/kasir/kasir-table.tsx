@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from 'react';
@@ -17,6 +18,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator, // Added import
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { User, Outlet } from "@/types";
