@@ -1,8 +1,8 @@
 
 "use client";
 
-import { useState, useEffect } from 'react';
-import type { Metadata } from 'next';
+import { useState, useEffect, useCallback } from 'react';
+// import type { Metadata } from 'next'; // Metadata is not used in client components
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { CalendarIcon, Download, Filter, RotateCcw } from "lucide-react";
+import { CalendarIcon, Download, Filter, RotateCcw, Loader2 } from "lucide-react";
 import { format, subDays } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import {
@@ -29,18 +29,32 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import type { Transaction, Outlet, User } from '@/types';
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
+import { useToast } from '@/hooks/use-toast';
 
+interface StoredUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role?: string;
+  merchantId?: string;
+}
 
-// Mock data for outlets and kasirs (can remain top-level as they don't use new Date())
-const mockOutlets: Outlet[] = [
-  { id: "outlet_1", name: "Main Outlet", address: "Jl. Sudirman No. 123", merchantId: "merch_1" },
-  { id: "outlet_2", name: "Branch Kemang", address: "Jl. Kemang Raya No. 45", merchantId: "merch_1" },
-];
-const mockKasirs: User[] = [
-  { id: "kasir_1", name: "Andi Setiawan", email: "", role:"kasir", status: "active" },
-  { id: "kasir_2", name: "Bunga Citra", email: "", role: "kasir", status: "active" },
-];
-
+const getCurrentUser = (): StoredUser | null => {
+  if (typeof window !== 'undefined') {
+    const storedUserStr = localStorage.getItem('mockUser');
+    if (storedUserStr) {
+      try {
+        return JSON.parse(storedUserStr) as StoredUser;
+      } catch (e) {
+        console.error("Failed to parse user from localStorage in ReportsPage", e);
+        return null;
+      }
+    }
+  }
+  return null;
+};
 
 export default function ReportsPage() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
@@ -48,34 +62,87 @@ export default function ReportsPage() {
   const [selectedKasir, setSelectedKasir] = useState<string>("all");
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("all");
   
-  const [clientSideMockTransactions, setClientSideMockTransactions] = useState<Transaction[]>([]);
+  const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
+  const [allOutlets, setAllOutlets] = useState<Outlet[]>([]);
+  const [allKasirs, setAllKasirs] = useState<User[]>([]);
   const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([]);
+  
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const { toast } = useToast();
+  const currentUser = getCurrentUser();
+
+  const fetchReportData = useCallback(async () => {
+    if (!currentUser || !currentUser.merchantId) {
+      toast({ title: "Error", description: "Merchant information not found.", variant: "destructive" });
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const merchantId = currentUser.merchantId;
+
+      // Fetch Outlets
+      const outletsQuery = query(collection(db, "outlets"), where("merchantId", "==", merchantId), orderBy("name", "asc"));
+      const outletsSnapshot = await getDocs(outletsQuery);
+      const fetchedOutlets: Outlet[] = outletsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Outlet));
+      setAllOutlets(fetchedOutlets);
+
+      // Fetch Kasirs (Users with role 'kasir')
+      const kasirsQuery = query(collection(db, "users"), where("merchantId", "==", merchantId), where("role", "==", "kasir"), orderBy("name", "asc"));
+      const kasirsSnapshot = await getDocs(kasirsQuery);
+      const fetchedKasirs: User[] = kasirsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+      setAllKasirs(fetchedKasirs);
+      
+      // Fetch Transactions
+      const transactionsQuery = query(collection(db, "transactions"), where("merchantId", "==", merchantId), orderBy("timestamp", "desc"));
+      const transactionsSnapshot = await getDocs(transactionsQuery);
+      const fetchedTransactions: Transaction[] = transactionsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return { 
+          id: doc.id, 
+          ...data,
+          // Ensure timestamp is a JS Date object for consistency if it's a Firestore Timestamp
+          timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(data.timestamp) 
+        } as Transaction;
+      });
+      setAllTransactions(fetchedTransactions);
+      setFilteredTransactions(fetchedTransactions); // Initialize filtered with all
+
+    } catch (error) {
+      console.error("Error fetching report data:", error);
+      toast({ title: "Fetch Failed", description: "Could not load report data.", variant: "destructive" });
+    }
+    setIsLoading(false);
+  }, [currentUser, toast]);
 
   useEffect(() => {
-    // Generate mock transactions on the client side
-    const initialMockTransactions: Transaction[] = [
-      { id: "txn_001", outletId: "outlet_1", kasirId: "kasir_1", timestamp: subDays(new Date(), 1), totalAmount: 150000, paymentMethod: "cash", items:[], subtotal:0, discountAmount:0, ppnAmount:0, merchantId: "merch_1" },
-      { id: "txn_002", outletId: "outlet_2", kasirId: "kasir_2", timestamp: subDays(new Date(), 2), totalAmount: 250000, paymentMethod: "qris", items:[], subtotal:0, discountAmount:0, ppnAmount:0, merchantId: "merch_1" },
-      { id: "txn_003", outletId: "outlet_1", kasirId: "kasir_1", timestamp: subDays(new Date(), 0), totalAmount: 80000, paymentMethod: "cash", items:[], subtotal:0, discountAmount:0, ppnAmount:0, merchantId: "merch_1" },
-    ];
-    setClientSideMockTransactions(initialMockTransactions);
-    setFilteredTransactions(initialMockTransactions);
-
-    // Initialize dateRange on the client side
+    fetchReportData();
+    // Initialize dateRange on the client side after initial data might be fetched or if running fully client-side
     setDateRange({
       from: subDays(new Date(), 7),
       to: new Date(),
     });
+  }, [fetchReportData]);
 
-    setIsLoading(false);
-  }, []); // Empty dependency array ensures this runs once on mount
 
   const applyFilters = () => {
     if (isLoading) return;
-    let transactions = clientSideMockTransactions;
-    if (dateRange?.from && dateRange?.to) {
-      transactions = transactions.filter(t => new Date(t.timestamp) >= dateRange.from! && new Date(t.timestamp) <= dateRange.to!);
+    let transactions = [...allTransactions]; // Work with a copy
+
+    if (dateRange?.from) {
+        transactions = transactions.filter(t => {
+            const transactionDate = t.timestamp instanceof Timestamp ? t.timestamp.toDate() : new Date(t.timestamp);
+            return transactionDate >= dateRange.from!;
+        });
+    }
+    if (dateRange?.to) {
+        transactions = transactions.filter(t => {
+            const transactionDate = t.timestamp instanceof Timestamp ? t.timestamp.toDate() : new Date(t.timestamp);
+            // Adjust 'to' date to include the whole day
+            const toDateEnd = new Date(dateRange.to!);
+            toDateEnd.setHours(23, 59, 59, 999);
+            return transactionDate <= toDateEnd;
+        });
     }
     if (selectedOutlet !== "all") {
       transactions = transactions.filter(t => t.outletId === selectedOutlet);
@@ -90,27 +157,36 @@ export default function ReportsPage() {
   };
   
   const resetFilters = () => {
-    if (isLoading) return;
+    if (isLoading) return; // Should not be strictly necessary if button disabled while loading
     setDateRange({ from: subDays(new Date(), 7), to: new Date() });
     setSelectedOutlet("all");
     setSelectedKasir("all");
     setSelectedPaymentMethod("all");
-    setFilteredTransactions(clientSideMockTransactions);
+    setFilteredTransactions(allTransactions);
   };
 
   const exportToExcel = () => {
     if (isLoading) return;
-    const dataToExport = filteredTransactions.map(t => ({
-      ID: t.id,
-      Date: format(t.timestamp, "yyyy-MM-dd HH:mm"), 
-      Outlet: mockOutlets.find(o => o.id === t.outletId)?.name || 'N/A',
-      Kasir: mockKasirs.find(k => k.id === t.kasirId)?.name || 'N/A',
-      'Payment Method': t.paymentMethod,
-      Total: t.totalAmount,
-    }));
+    const dataToExport = filteredTransactions.map(t => {
+        const transactionDate = t.timestamp instanceof Timestamp ? t.timestamp.toDate() : new Date(t.timestamp);
+        return {
+            ID: t.id,
+            Date: format(transactionDate, "yyyy-MM-dd HH:mm"), 
+            Outlet: allOutlets.find(o => o.id === t.outletId)?.name || t.outletName || 'N/A',
+            Kasir: allKasirs.find(k => k.id === t.kasirId)?.name || t.kasirName || 'N/A',
+            'Payment Method': t.paymentMethod,
+            Total: t.totalAmount,
+        };
+    });
+
+    if (dataToExport.length === 0) {
+        toast({ title: "No Data", description: "No data to export based on current filters.", variant: "default"});
+        return;
+    }
+
     const csvContent = "data:text/csv;charset=utf-8," 
-      + Object.keys(dataToExport[0] || {}).join(",") + "\n"
-      + dataToExport.map(e => Object.values(e).join(",")).join("\n");
+      + Object.keys(dataToExport[0]).join(",") + "\n"
+      + dataToExport.map(e => Object.values(e).map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
     
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -119,11 +195,13 @@ export default function ReportsPage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    toast({ title: "Export Successful", description: "Sales report has been downloaded as CSV.", variant: "default" });
   };
 
-  if (isLoading) {
+  if (isLoading && !allTransactions.length) { // Show loader only on initial full load
     return (
       <div className="flex flex-col gap-6 items-center justify-center min-h-[calc(100vh-theme(spacing.28))]">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
         <p className="text-muted-foreground text-lg">Loading report data...</p>
       </div>
     );
@@ -133,7 +211,7 @@ export default function ReportsPage() {
     <div className="flex flex-col gap-6">
        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h1 className="text-3xl font-headline font-bold tracking-tight text-foreground">Sales Reports</h1>
-        <Button onClick={exportToExcel} variant="outline">
+        <Button onClick={exportToExcel} variant="outline" disabled={isLoading}>
           <Download className="mr-2 h-4 w-4" /> Export to Excel
         </Button>
       </div>
@@ -152,7 +230,7 @@ export default function ReportsPage() {
                   id="date-range"
                   variant={"outline"}
                   className="w-full justify-start text-left font-normal"
-                  disabled={!dateRange} // Disable if dateRange is not yet initialized
+                  disabled={!dateRange || isLoading} 
                 >
                   <CalendarIcon className="mr-2 h-4 w-4" />
                   {dateRange?.from ? (
@@ -177,6 +255,7 @@ export default function ReportsPage() {
                   selected={dateRange}
                   onSelect={setDateRange}
                   numberOfMonths={2}
+                  disabled={isLoading}
                 />
               </PopoverContent>
             </Popover>
@@ -184,13 +263,13 @@ export default function ReportsPage() {
           
           <div className="space-y-2">
             <Label htmlFor="outlet-filter">Outlet</Label>
-            <Select value={selectedOutlet} onValueChange={setSelectedOutlet}>
+            <Select value={selectedOutlet} onValueChange={setSelectedOutlet} disabled={isLoading || allOutlets.length === 0}>
               <SelectTrigger id="outlet-filter">
                 <SelectValue placeholder="All Outlets" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Outlets</SelectItem>
-                {mockOutlets.map(outlet => (
+                {allOutlets.map(outlet => (
                   <SelectItem key={outlet.id} value={outlet.id}>{outlet.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -199,13 +278,13 @@ export default function ReportsPage() {
 
           <div className="space-y-2">
             <Label htmlFor="kasir-filter">Kasir</Label>
-            <Select value={selectedKasir} onValueChange={setSelectedKasir}>
+            <Select value={selectedKasir} onValueChange={setSelectedKasir} disabled={isLoading || allKasirs.length === 0}>
               <SelectTrigger id="kasir-filter">
                 <SelectValue placeholder="All Kasirs" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Kasirs</SelectItem>
-                 {mockKasirs.map(kasir => (
+                 {allKasirs.map(kasir => (
                   <SelectItem key={kasir.id} value={kasir.id}>{kasir.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -214,7 +293,7 @@ export default function ReportsPage() {
 
           <div className="space-y-2">
             <Label htmlFor="payment-method-filter">Payment Method</Label>
-            <Select value={selectedPaymentMethod} onValueChange={setSelectedPaymentMethod}>
+            <Select value={selectedPaymentMethod} onValueChange={setSelectedPaymentMethod} disabled={isLoading}>
               <SelectTrigger id="payment-method-filter">
                 <SelectValue placeholder="All Methods" />
               </SelectTrigger>
@@ -227,10 +306,10 @@ export default function ReportsPage() {
             </Select>
           </div>
           <div className="flex gap-2">
-            <Button onClick={applyFilters} className="w-full sm:w-auto">
+            <Button onClick={applyFilters} className="w-full sm:w-auto" disabled={isLoading}>
               <Filter className="mr-2 h-4 w-4" /> Apply Filters
             </Button>
-             <Button onClick={resetFilters} variant="ghost" className="w-full sm:w-auto">
+             <Button onClick={resetFilters} variant="ghost" className="w-full sm:w-auto" disabled={isLoading}>
               <RotateCcw className="mr-2 h-4 w-4" /> Reset
             </Button>
           </div>
@@ -256,27 +335,30 @@ export default function ReportsPage() {
               </TableHeader>
               <TableBody>
                 {filteredTransactions.length > 0 ? (
-                  filteredTransactions.map((transaction) => (
-                    <TableRow key={transaction.id}>{/*
-                      */}<TableCell>{format(transaction.timestamp, "dd MMM yyyy, HH:mm")}</TableCell>{/*
-                      */}<TableCell>{mockOutlets.find(o => o.id === transaction.outletId)?.name || 'N/A'}</TableCell>{/*
-                      */}<TableCell>{mockKasirs.find(k => k.id === transaction.kasirId)?.name || 'N/A'}</TableCell>{/*
-                      */}<TableCell>
+                  filteredTransactions.map((transaction) => {
+                    const transactionDate = transaction.timestamp instanceof Timestamp ? transaction.timestamp.toDate() : new Date(transaction.timestamp);
+                    return (
+                    <TableRow key={transaction.id}>
+                      <TableCell>{format(transactionDate, "dd MMM yyyy, HH:mm")}</TableCell>
+                      <TableCell>{allOutlets.find(o => o.id === transaction.outletId)?.name || transaction.outletName || 'N/A'}</TableCell>
+                      <TableCell>{allKasirs.find(k => k.id === transaction.kasirId)?.name || transaction.kasirName || 'N/A'}</TableCell>
+                      <TableCell>
                         <Badge variant={transaction.paymentMethod === 'cash' ? 'secondary' : 'outline'} className="capitalize">
                             {transaction.paymentMethod}
                         </Badge>
-                      </TableCell>{/*
-                      */}<TableCell className="text-right">
-                        {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(transaction.totalAmount)}
-                      </TableCell>{/*
-                    */}</TableRow>
-                  ))
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(transaction.totalAmount)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
                 ) : (
-                  <TableRow>{/*
-                    */}<TableCell colSpan={5} className="h-24 text-center">
-                      No transactions match your current filters.
-                    </TableCell>{/*
-                  */}</TableRow>
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-24 text-center">
+                      {isLoading ? "Loading transactions..." : "No transactions match your current filters."}
+                    </TableCell>
+                  </TableRow>
                 )}
               </TableBody>
             </Table>
@@ -286,3 +368,4 @@ export default function ReportsPage() {
     </div>
   );
 }
+
