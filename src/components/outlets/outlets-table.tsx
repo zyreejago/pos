@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -11,8 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { MoreHorizontal, Edit3, Trash2, PlusCircle, MapPin } from "lucide-react";
+import { MoreHorizontal, Edit3, Trash2, PlusCircle, MapPin, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,71 +32,76 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, doc, deleteDoc, orderBy } from 'firebase/firestore';
 
-const APP_OUTLETS_STORAGE_KEY = 'tokoAppMockOutlets';
+interface StoredUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role?: string;
+  merchantId?: string;
+}
 
-const initialMockOutlets: Outlet[] = [
-  { id: "outlet_1", name: "Main Outlet", address: "Jl. Sudirman No. 123, Jakarta Pusat", merchantId: "merch_1" },
-  { id: "outlet_2", name: "Branch Kemang", address: "Jl. Kemang Raya No. 45, Jakarta Selatan", merchantId: "merch_1" },
-  { id: "outlet_3", name: "Warehouse Cilandak", address: "Jl. TB Simatupang Kav. 6, Jakarta Selatan", merchantId: "merch_1" },
-];
-
-const getStoredOutlets = (): Outlet[] => {
-  if (typeof window === 'undefined') {
-    return initialMockOutlets;
-  }
-  const stored = localStorage.getItem(APP_OUTLETS_STORAGE_KEY);
-  if (stored) {
-    try {
-      return JSON.parse(stored);
-    } catch (e) {
-      console.error("Failed to parse outlets from localStorage", e);
-      localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(initialMockOutlets));
-      return initialMockOutlets;
-    }
-  } else {
-    localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(initialMockOutlets));
-    return initialMockOutlets;
-  }
-};
-
-const storeOutlets = (outlets: Outlet[]) => {
+const getCurrentUser = (): StoredUser | null => {
   if (typeof window !== 'undefined') {
-    localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(outlets));
+    const storedUserStr = localStorage.getItem('mockUser');
+    if (storedUserStr) {
+      try {
+        return JSON.parse(storedUserStr) as StoredUser;
+      } catch (e) {
+        console.error("Failed to parse user from localStorage in OutletsTable", e);
+        return null;
+      }
+    }
   }
+  return null;
 };
 
 export function OutletsTable() {
   const [outlets, setOutlets] = useState<Outlet[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [editingOutlet, setEditingOutlet] = useState<Outlet | undefined>(undefined);
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState(false); // To control dialog visibility directly
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [outletToDelete, setOutletToDelete] = useState<Outlet | null>(null);
   const { toast } = useToast();
+  const currentUser = getCurrentUser();
+
+  const fetchOutlets = useCallback(async () => {
+    if (!currentUser || !currentUser.merchantId) {
+      // toast({ title: "Error", description: "Merchant information not found. Cannot load outlets.", variant: "destructive" });
+      setIsLoading(false);
+      setOutlets([]); // Clear outlets if no merchantId
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const q = query(
+        collection(db, "outlets"), 
+        where("merchantId", "==", currentUser.merchantId),
+        orderBy("createdAt", "desc") // Optional: order by creation time
+      );
+      const querySnapshot = await getDocs(q);
+      const fetchedOutlets: Outlet[] = [];
+      querySnapshot.forEach((doc) => {
+        fetchedOutlets.push({ id: doc.id, ...doc.data() } as Outlet);
+      });
+      setOutlets(fetchedOutlets);
+    } catch (error) {
+      console.error("Error fetching outlets: ", error);
+      toast({ title: "Fetch Failed", description: "Could not fetch outlets data.", variant: "destructive" });
+      setOutlets([]); // Clear outlets on error
+    }
+    setIsLoading(false);
+  }, [currentUser, toast]);
 
   useEffect(() => {
-    setOutlets(getStoredOutlets());
-  }, []);
+    fetchOutlets();
+  }, [fetchOutlets]);
 
-  const handleSaveOutlet = async (data: Omit<Outlet, 'id' | 'merchantId'> & { id?: string }) => {
-     return new Promise<void>((resolve) => {
-        setTimeout(() => {
-            let updatedOutlets: Outlet[];
-            if (editingOutlet) {
-                updatedOutlets = outlets.map(o => o.id === editingOutlet.id ? { ...editingOutlet, ...data, id: editingOutlet.id, merchantId: "merch_1" } : o);
-                toast({ title: "Outlet Updated", description: `Outlet ${data.name} has been updated.`});
-            } else {
-                const newOutlet: Outlet = { ...data, id: `outlet_${Date.now()}`, merchantId: "merch_1" };
-                updatedOutlets = [newOutlet, ...outlets];
-                toast({ title: "Outlet Added", description: `Outlet ${newOutlet.name} has been added.`});
-            }
-            setOutlets(updatedOutlets);
-            storeOutlets(updatedOutlets);
-            setEditingOutlet(undefined);
-            setIsFormOpen(false);
-            resolve();
-        }, 500);
-    });
+  const handleSaveSuccess = () => {
+    fetchOutlets(); // Re-fetch outlets after save
   };
 
   const openEditDialog = (outlet: Outlet) => {
@@ -115,26 +119,62 @@ export function OutletsTable() {
     setShowDeleteConfirm(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (outletToDelete) {
-      const updatedOutlets = outlets.filter(o => o.id !== outletToDelete.id);
-      setOutlets(updatedOutlets);
-      storeOutlets(updatedOutlets);
-      toast({ title: "Outlet Deleted", description: `Outlet ${outletToDelete.name} has been deleted.`, variant: "destructive" });
+      try {
+        await deleteDoc(doc(db, "outlets", outletToDelete.id));
+        toast({ title: "Outlet Deleted", description: `Outlet ${outletToDelete.name} has been deleted.`});
+        fetchOutlets(); // Re-fetch after delete
+         // Also remove from selected outlet if it was the one deleted
+        if (typeof window !== 'undefined') {
+            const selectedOutletId = localStorage.getItem('selectedOutletId');
+            if (selectedOutletId === outletToDelete.id) {
+                localStorage.removeItem('selectedOutletId');
+                localStorage.removeItem('selectedOutletName');
+                // Optionally redirect or notify user to select another outlet
+            }
+        }
+      } catch (error) {
+        console.error("Error deleting outlet: ", error);
+        toast({ title: "Delete Failed", description: "Could not delete outlet. Please try again.", variant: "destructive" });
+      }
     }
     setShowDeleteConfirm(false);
     setOutletToDelete(null);
   };
 
+  if (!currentUser) {
+     return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Loading user data...</p>
+        <p className="text-sm text-muted-foreground">If this persists, please try logging in again.</p>
+      </div>
+    );
+  }
+  
+  if (!currentUser.merchantId) {
+    return (
+      <div className="p-4 text-center text-destructive-foreground bg-destructive/80 rounded-md">
+        Merchant information is missing. Please ensure you are logged in correctly or contact support.
+      </div>
+    );
+  }
+
+
   return (
     <>
       <div className="flex justify-end mb-4">
-        <OutletFormDialog 
-            outlet={editingOutlet} 
-            onSave={handleSaveOutlet}
-            triggerButton={<Button onClick={openNewDialog}><PlusCircle className="mr-2 h-4 w-4" /> Add Outlet</Button>}
-        />
+        <Button onClick={openNewDialog} disabled={isLoading || !currentUser?.merchantId}>
+          <PlusCircle className="mr-2 h-4 w-4" /> Add Outlet
+        </Button>
       </div>
+      {isLoading ? (
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="ml-2 text-muted-foreground">Loading outlets...</p>
+        </div>
+      ) : (
       <div className="rounded-lg border shadow-sm bg-card">
         <Table>
           <TableHeader>
@@ -175,7 +215,7 @@ export function OutletsTable() {
                 </TableCell>
               </TableRow>
             ))}
-             {outlets.length === 0 && (
+             {outlets.length === 0 && !isLoading && (
               <TableRow>
                 <TableCell colSpan={3} className="h-24 text-center text-muted-foreground">
                   No outlets found. Start by adding a new outlet.
@@ -185,6 +225,7 @@ export function OutletsTable() {
           </TableBody>
         </Table>
       </div>
+      )}
 
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <AlertDialogContent>
@@ -192,7 +233,7 @@ export function OutletsTable() {
             <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
             <AlertDialogDescription>
               This action cannot be undone. This will permanently delete the outlet
-              <span className="font-semibold"> {outletToDelete?.name}</span> and all associated data.
+              <span className="font-semibold"> {outletToDelete?.name}</span>.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -207,12 +248,10 @@ export function OutletsTable() {
       {isFormOpen && (
         <OutletFormDialog
           outlet={editingOutlet}
-          onSave={handleSaveOutlet}
+          onSaveSuccess={handleSaveSuccess}
           triggerButton={<div style={{display: 'none'}} />} 
         />
       )}
     </>
   );
 }
-
-    

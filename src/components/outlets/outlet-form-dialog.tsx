@@ -1,3 +1,4 @@
+
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,9 +24,12 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { Outlet } from "@/types";
+import type { Outlet as OutletType } from "@/types"; // Renamed to avoid conflict
 import { PlusCircle, Store, MapPin } from "lucide-react";
 import { useState, useEffect } from "react";
+import { db, serverTimestamp } from '@/lib/firebase';
+import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import { useToast } from "@/hooks/use-toast";
 
 const outletFormSchema = z.object({
   name: z.string().min(2, { message: "Outlet name must be at least 2 characters." }),
@@ -34,15 +38,40 @@ const outletFormSchema = z.object({
 
 type OutletFormValues = z.infer<typeof outletFormSchema>;
 
+interface StoredUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role?: string;
+  merchantId?: string;
+}
+
+const getCurrentUser = (): StoredUser | null => {
+  if (typeof window !== 'undefined') {
+    const storedUserStr = localStorage.getItem('mockUser');
+    if (storedUserStr) {
+      try {
+        return JSON.parse(storedUserStr) as StoredUser;
+      } catch (e) {
+        console.error("Failed to parse user from localStorage in OutletFormDialog", e);
+        return null;
+      }
+    }
+  }
+  return null;
+};
+
 interface OutletFormDialogProps {
-  outlet?: Outlet;
-  onSave: (data: OutletFormValues) => Promise<void>;
+  outlet?: OutletType;
+  onSaveSuccess: () => void; // Callback to refresh table
   triggerButton?: React.ReactNode;
 }
 
-export function OutletFormDialog({ outlet, onSave, triggerButton }: OutletFormDialogProps) {
+export function OutletFormDialog({ outlet, onSaveSuccess, triggerButton }: OutletFormDialogProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const { toast } = useToast();
+  const currentUser = getCurrentUser();
 
   const form = useForm<OutletFormValues>({
     resolver: zodResolver(outletFormSchema),
@@ -60,11 +89,37 @@ export function OutletFormDialog({ outlet, onSave, triggerButton }: OutletFormDi
 
 
   const onSubmit = async (data: OutletFormValues) => {
+    if (!currentUser || !currentUser.merchantId) {
+      toast({ title: "Error", description: "Merchant information not found. Please re-login.", variant: "destructive" });
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
-    await onSave(data);
+    try {
+      if (outlet) { // Editing existing outlet
+        const outletRef = doc(db, "outlets", outlet.id);
+        await updateDoc(outletRef, {
+          ...data,
+          // merchantId: currentUser.merchantId, // merchantId should not change on edit
+          // updatedAt: serverTimestamp(), // Add if you have an updatedAt field
+        });
+        toast({ title: "Outlet Updated", description: `Outlet ${data.name} has been updated.` });
+      } else { // Adding new outlet
+        await addDoc(collection(db, "outlets"), {
+          ...data,
+          merchantId: currentUser.merchantId,
+          createdAt: serverTimestamp(),
+        });
+        toast({ title: "Outlet Added", description: `Outlet ${data.name} has been added.` });
+      }
+      onSaveSuccess(); // Call callback to refresh parent table
+      setIsOpen(false);
+      form.reset(); 
+    } catch (error) {
+      console.error("Error saving outlet: ", error);
+      toast({ title: "Save Failed", description: "Could not save outlet data. Please try again.", variant: "destructive" });
+    }
     setIsLoading(false);
-    setIsOpen(false);
-    form.reset(); // Reset form after successful submission
   };
 
   return (
@@ -115,7 +170,7 @@ export function OutletFormDialog({ outlet, onSave, triggerButton }: OutletFormDi
             />
             <DialogFooter className="pt-4">
               <Button type="button" variant="outline" onClick={() => setIsOpen(false)} disabled={isLoading}>Cancel</Button>
-              <Button type="submit" disabled={isLoading}>
+              <Button type="submit" disabled={isLoading || !currentUser}>
                 {isLoading ? (outlet ? "Saving..." : "Adding...") : (outlet ? "Save Changes" : "Add Outlet")}
               </Button>
             </DialogFooter>

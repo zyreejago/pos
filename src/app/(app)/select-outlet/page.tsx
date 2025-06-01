@@ -1,76 +1,110 @@
 
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link'; // Added Link import
+import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Store, ArrowRight, PlusCircle } from 'lucide-react'; // Added PlusCircle
+import { Store, ArrowRight, PlusCircle, Loader2 } from 'lucide-react';
 import type { Outlet } from '@/types';
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { useToast } from '@/hooks/use-toast';
 
-const APP_OUTLETS_STORAGE_KEY = 'tokoAppMockOutlets';
+interface StoredUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role?: string;
+  merchantId?: string;
+  status?: 'active' | 'pending_approval' | 'inactive';
+}
 
-// Default outlets if localStorage is empty or invalid
-const defaultSeedOutlets: Outlet[] = [
-  { id: "outlet_1", name: "Main Outlet", address: "Jl. Sudirman No. 123, Jakarta Pusat", merchantId: "merch_1" },
-  { id: "outlet_2", name: "Branch Kemang", address: "Jl. Kemang Raya No. 45, Jakarta Selatan", merchantId: "merch_1" },
-  { id: "outlet_3", name: "Warehouse Cilandak", address: "Jl. TB Simatupang Kav. 6, Jakarta Selatan", merchantId: "merch_1" },
-];
-
-const getStoredOutlets = (): Outlet[] => {
-  if (typeof window === 'undefined') {
-    return defaultSeedOutlets;
-  }
-  const stored = localStorage.getItem(APP_OUTLETS_STORAGE_KEY);
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored);
-      return Array.isArray(parsed) ? parsed : defaultSeedOutlets;
-    } catch (e) {
-      console.error("Failed to parse outlets from localStorage on select page", e);
-      localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(defaultSeedOutlets));
-      return defaultSeedOutlets;
+const getCurrentUser = (): StoredUser | null => {
+  if (typeof window !== 'undefined') {
+    const storedUserStr = localStorage.getItem('mockUser');
+    if (storedUserStr) {
+      try {
+        return JSON.parse(storedUserStr) as StoredUser;
+      } catch (e) {
+        console.error("Failed to parse user from localStorage in SelectOutletPage", e);
+        return null;
+      }
     }
-  } else {
-    // Seed localStorage if it's empty
-    localStorage.setItem(APP_OUTLETS_STORAGE_KEY, JSON.stringify(defaultSeedOutlets));
-    return defaultSeedOutlets;
   }
+  return null;
 };
-
 
 export default function SelectOutletPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [availableOutlets, setAvailableOutlets] = useState<Outlet[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setAvailableOutlets(getStoredOutlets());
+    const user = getCurrentUser();
+    setCurrentUser(user);
 
-      const mockUserStr = localStorage.getItem('mockUser');
-      if (mockUserStr) {
-        try {
-          const mockUser = JSON.parse(mockUserStr);
-          if (mockUser.role === 'superadmin') {
-            router.push('/admin/users');
-            return;
-          }
-        } catch (e) {
-          console.error("Error parsing mockUser for outlet selection:", e);
-          // Potentially clear corrupted user data and redirect to login
-          localStorage.removeItem('mockUser');
-          localStorage.removeItem('selectedOutletId');
-          localStorage.removeItem('selectedOutletName');
-          router.push('/login');
-          return;
-        }
-      }
-      // No need to redirect if an outlet is already selected here,
-      // user might be intentionally navigating to change outlet.
-      // The AppLayout handles protection for other pages.
+    if (user && user.role === 'superadmin') {
+      router.push('/admin/users');
+      return;
     }
-  }, [router]);
+    if (!user) {
+        // This case should ideally be caught by AppLayout, but as a fallback
+        toast({title: "Session Expired", description: "Please log in again.", variant: "destructive"});
+        router.push('/login');
+        return;
+    }
+     if (user.status === 'pending_approval' || user.status === 'inactive') {
+        toast({
+            title: `Account ${user.status === 'pending_approval' ? 'Pending Approval' : 'Inactive'}`,
+            description: `Your account is currently ${user.status}. Please contact support or wait for approval.`,
+            variant: "destructive",
+        });
+        // Consider logging out or redirecting to a specific info page
+        // For now, we'll prevent further action by not loading outlets
+        setIsLoading(false);
+        return;
+    }
+
+
+  }, [router, toast]);
+
+  const fetchOutlets = useCallback(async () => {
+    if (!currentUser || !currentUser.merchantId || currentUser.status !== 'active') {
+      setIsLoading(false);
+      setAvailableOutlets([]);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const q = query(
+        collection(db, "outlets"), 
+        where("merchantId", "==", currentUser.merchantId),
+        orderBy("name", "asc") // Order by name for consistent display
+      );
+      const querySnapshot = await getDocs(q);
+      const fetchedOutlets: Outlet[] = [];
+      querySnapshot.forEach((doc) => {
+        fetchedOutlets.push({ id: doc.id, ...doc.data() } as Outlet);
+      });
+      setAvailableOutlets(fetchedOutlets);
+    } catch (error) {
+      console.error("Error fetching outlets for selection: ", error);
+      toast({ title: "Fetch Failed", description: "Could not load your outlets. Please try again.", variant: "destructive" });
+      setAvailableOutlets([]);
+    }
+    setIsLoading(false);
+  }, [currentUser, toast]);
+
+  useEffect(() => {
+    if (currentUser && currentUser.merchantId && currentUser.status === 'active') {
+      fetchOutlets();
+    }
+  }, [currentUser, fetchOutlets]);
+
 
   const handleSelectOutlet = (outlet: Outlet) => {
     if (typeof window !== 'undefined') {
@@ -79,6 +113,15 @@ export default function SelectOutletPage() {
     }
     router.push('/dashboard');
   };
+  
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.28))] p-4 md:p-8">
+        <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Loading your outlets...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.28))] p-4 md:p-8">
@@ -109,9 +152,10 @@ export default function SelectOutletPage() {
             </Button>
           ))}
           {availableOutlets.length === 0 && (
-            <p className="text-center text-muted-foreground py-6">
-              No outlets available for selection.
-            </p>
+             <div className="text-center py-6 text-muted-foreground">
+                <p className="mb-2">No outlets available for selection.</p>
+                <p className="text-sm">You can add your first outlet from the management page.</p>
+             </div>
           )}
            <Button variant="ghost" asChild className="w-full mt-6 text-primary hover:text-primary/90 hover:bg-primary/10">
             <Link href="/outlets">

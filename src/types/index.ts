@@ -18,6 +18,7 @@ export interface Outlet {
   address: string;
   merchantId: string;
   createdAt?: any; // Firebase ServerTimestamp or Date
+  // updatedAt?: any; // Firebase ServerTimestamp or Date // Add if needed
 }
 
 export interface Product {
