@@ -9,7 +9,7 @@ export interface User {
   outlets?: string[]; // Outlet IDs kasir has access to
   status: 'active' | 'pending_approval' | 'inactive';
   merchantId?: string; // For kasir/admin, to associate with a merchant
-  // createdAt?: any; // Firestore ServerTimestamp - Removed for mock data
+  createdAt?: any; // Firebase ServerTimestamp or Date
 }
 
 export interface Outlet {
@@ -17,6 +17,7 @@ export interface Outlet {
   name: string;
   address: string;
   merchantId: string;
+  createdAt?: any; // Firebase ServerTimestamp or Date
 }
 
 export interface Product {
@@ -34,6 +35,8 @@ export interface Product {
     conversionFactor?: number; // How many base units in this unit
   }>;
   merchantId: string;
+  createdAt?: any; // Firebase ServerTimestamp or Date
+  updatedAt?: any; // Firebase ServerTimestamp or Date
 }
 
 export interface Supplier {
@@ -44,6 +47,7 @@ export interface Supplier {
   email?: string;
   address?: string;
   merchantId: string;
+  createdAt?: any; // Firebase ServerTimestamp or Date
 }
 
 export interface TransactionItem {
@@ -58,7 +62,9 @@ export interface TransactionItem {
 export interface Transaction {
   id: string;
   kasirId: string;
+  kasirName?: string; // Denormalized
   outletId: string;
+  outletName?: string; // Denormalized
   items: TransactionItem[];
   subtotal: number;
   discountAmount: number; // Calculated from discountRate
@@ -67,7 +73,7 @@ export interface Transaction {
   paymentMethod: 'cash' | 'qris';
   cashReceived?: number;
   changeGiven?: number;
-  timestamp: Date;
+  timestamp: any; // Firebase ServerTimestamp or Date
   merchantId: string;
 }
 

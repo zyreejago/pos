@@ -2,14 +2,14 @@
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import { getAnalytics, isSupported as isAnalyticsSupported } from "firebase/analytics";
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, serverTimestamp } from 'firebase/firestore'; // Added serverTimestamp
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyDZbkWw_6lNxvzpYtVO1fjz8gfFh-ZOyhA",
   authDomain: "poss-b0c1a.firebaseapp.com",
   projectId: "poss-b0c1a",
-  storageBucket: "poss-b0c1a.firebasestorage.app", // User updated value
+  storageBucket: "poss-b0c1a.firebasestorage.app",
   messagingSenderId: "960224107625",
   appId: "1:960224107625:web:2962928ccdddf46c75d6f8",
   measurementId: "G-FW6EZS3BY4"
@@ -36,4 +36,4 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export { app, auth, db, analytics };
+export { app, auth, db, analytics, serverTimestamp }; // Exported serverTimestamp

@@ -18,9 +18,11 @@ import { Input } from "@/components/ui/input";
 import { Mail, Lock } from 'lucide-react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-// import { signInWithEmailAndPassword } from 'firebase/auth';
-// import { auth } from '@/lib/firebase'; // Firebase import removed
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth, db } from '@/lib/firebase';
+import { doc, getDoc } from "firebase/firestore";
 import { useToast } from '@/hooks/use-toast';
+import type { User } from '@/types';
 
 const loginFormSchema = z.object({
   email: z.string().email({ message: "Please enter a valid email address." }),
@@ -44,31 +46,82 @@ export function LoginForm() {
 
   async function onSubmit(values: LoginFormValues) {
     setIsLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, values.email, values.password);
+      const firebaseUser = userCredential.user;
 
-    // Mock login logic
-    if (values.email === "test@example.com" && values.password === "password") {
+      if (firebaseUser) {
+        const userDocRef = doc(db, "users", firebaseUser.uid);
+        const userDocSnap = await getDoc(userDocRef);
+
+        if (userDocSnap.exists()) {
+          const userData = userDocSnap.data() as User;
+          // Store essential user data in localStorage.
+          // We use 'mockUser' key for now to maintain compatibility with AppLayout/AppHeader
+          // Ideally, this should be renamed or handled via context/state management.
+          localStorage.setItem('mockUser', JSON.stringify({ 
+            id: firebaseUser.uid, // Use actual UID
+            email: userData.email, 
+            displayName: userData.name, 
+            role: userData.role,
+            merchantId: userData.merchantId 
+          }));
+
+          toast({
+            title: "Login Successful!",
+            description: `Welcome back, ${userData.name}!`,
+          });
+
+          if (userData.role === 'superadmin') {
+            router.push("/admin/users");
+          } else if (userData.role === 'admin' || userData.role === 'kasir') {
+            // Check if merchant is approved
+            if (userData.status === 'pending_approval') {
+                toast({
+                    title: "Account Pending Approval",
+                    description: "Your merchant account is still awaiting approval from the superadmin.",
+                    variant: "destructive",
+                });
+                 await auth.signOut(); // Log out user
+                 localStorage.removeItem('mockUser');
+                 setIsLoading(false);
+                 return;
+            }
+            if (userData.status === 'inactive') {
+                 toast({
+                    title: "Account Inactive",
+                    description: "Your account is currently inactive. Please contact support.",
+                    variant: "destructive",
+                });
+                 await auth.signOut(); // Log out user
+                 localStorage.removeItem('mockUser');
+                 setIsLoading(false);
+                 return;
+            }
+            router.push("/select-outlet");
+          } else {
+             router.push("/dashboard"); // Fallback
+          }
+        } else {
+          toast({
+            title: "Login Error",
+            description: "User data not found. Please contact support.",
+            variant: "destructive",
+          });
+          await auth.signOut(); // Log out user if their Firestore doc is missing
+        }
+      }
+    } catch (error: any) {
+      console.error("Firebase login error:", error);
+      let errorMessage = "Login failed. Please check your credentials.";
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        errorMessage = "Invalid email or password.";
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMessage = "Too many login attempts. Please try again later.";
+      }
       toast({
-        title: "Login Successful! (Mock)",
-        description: "Welcome back! Please select your outlet.",
-      });
-      // Store mock user in localStorage for app-header to pick up
-      localStorage.setItem('mockUser', JSON.stringify({ email: values.email, displayName: 'Test User', role: 'admin' })); // Assuming test user is admin
-      router.push("/select-outlet"); // Redirect to outlet selection
-    } else if (values.email === "super@tokoapp.com" && values.password === "password"){
-       toast({
-        title: "Login Successful! (Mock Superadmin)",
-        description: "Welcome Super Admin!",
-      });
-      localStorage.setItem('mockUser', JSON.stringify({ email: values.email, displayName: 'Super Admin', role: 'superadmin' }));
-      router.push("/admin/users"); // Superadmin goes directly to user management
-    }
-    
-    else {
-      toast({
-        title: "Login Failed (Mock)",
-        description: "Invalid email or password for mock login.",
+        title: "Login Failed",
+        description: errorMessage,
         variant: "destructive",
       });
     }

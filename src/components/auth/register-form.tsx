@@ -19,10 +19,9 @@ import { User as UserIconStandard, Mail, Lock } from 'lucide-react';
 import { useState } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from 'next/navigation';
-// Firebase imports removed
-// import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-// import { auth, db } from '@/lib/firebase';
-// import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { auth, db, serverTimestamp } from '@/lib/firebase';
+import { doc, setDoc } from "firebase/firestore";
 import type { User } from '@/types';
 
 
@@ -55,17 +54,46 @@ export function RegisterForm() {
 
   async function onSubmit(values: RegisterFormValues) {
     setIsLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
+      const firebaseUser = userCredential.user;
 
-    // Mock registration logic
-    console.log("Mock Registration Data:", values);
-    toast({
-      title: "Registration Successful! (Mock)",
-      description: "Your account has been created (simulated). You can now log in.",
-    });
-    router.push("/login");
+      if (firebaseUser) {
+        // Update Firebase Auth profile (optional but good practice)
+        await updateProfile(firebaseUser, { displayName: values.merchantName });
 
+        // Create user document in Firestore
+        const newUserDoc: User = {
+          id: firebaseUser.uid,
+          name: values.merchantName,
+          email: values.email,
+          role: 'admin', // New registrations are merchant admins by default
+          status: 'pending_approval', // New merchants need approval
+          merchantId: firebaseUser.uid, // The admin's UID becomes their merchantId
+          createdAt: serverTimestamp(),
+        };
+        await setDoc(doc(db, "users", firebaseUser.uid), newUserDoc);
+
+        toast({
+          title: "Registration Successful!",
+          description: "Your account has been created and is pending approval. Please check back later or contact superadmin.",
+        });
+        router.push("/login"); // Redirect to login page
+      }
+    } catch (error: any) {
+      console.error("Firebase registration error:", error);
+      let errorMessage = "Registration failed. Please try again.";
+      if (error.code === 'auth/email-already-in-use') {
+        errorMessage = "This email is already registered. Please try logging in.";
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = "The password is too weak. Please choose a stronger password.";
+      }
+      toast({
+        title: "Registration Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    }
     setIsLoading(false);
   }
 
