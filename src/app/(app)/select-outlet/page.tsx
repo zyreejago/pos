@@ -25,7 +25,7 @@ export default function SelectOutletPage() {
   const { toast } = useToast();
   const [availableOutlets, setAvailableOutlets] = useState<OutletType[]>([]);
   
-  const [authUser, setAuthUser] = useState<AppAuthUser | null | false>(false);
+  const [authUser, setAuthUser] = useState<AppAuthUser | null | false>(false); // false = initial, null = logged out, AppAuthUser = logged in
   const [firestoreUserData, setFirestoreUserData] = useState<FirestoreUserType | null>(null);
   const [isLoadingUser, setIsLoadingUser] = useState(true);
   const [isLoadingOutlets, setIsLoadingOutlets] = useState(false);
@@ -35,6 +35,7 @@ export default function SelectOutletPage() {
     setIsClient(true);
   }, []);
 
+  // Effect 1: Auth state listener
   useEffect(() => {
     console.log('[SelectOutletPage E1] Auth listener useEffect triggered.');
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -50,7 +51,6 @@ export default function SelectOutletPage() {
       } else {
         console.log('[SelectOutletPage E1] onAuthStateChanged: User is logged out, setting authUser to null.');
         setAuthUser(null);
-        // No need to redirect here, E4 handles it
       }
     });
     return () => {
@@ -60,6 +60,7 @@ export default function SelectOutletPage() {
   }, []);
 
 
+  // Effect 2: Fetch Firestore user data when authUser changes
   const fetchFirestoreUser = useCallback(async (uid: string) => {
     console.log(`[SelectOutletPage E2 FF] Fetching Firestore user for UID: ${uid}`);
     setIsLoadingUser(true);
@@ -98,9 +99,10 @@ export default function SelectOutletPage() {
   }, [authUser, fetchFirestoreUser]);
 
 
+  // Effect 3: Fetch outlets when firestoreUserData is available and user is eligible
   const fetchOutletsForSelection = useCallback(async () => {
-    if (!firestoreUserData || !firestoreUserData.merchantId) {
-      console.log('[SelectOutletPage E3 FF] Pre-conditions for fetching outlets not met (no firestoreUserData or merchantId). Bailing.', { hasUser: !!firestoreUserData, hasMerchantId: !!firestoreUserData?.merchantId });
+    if (!firestoreUserData || !firestoreUserData.merchantId || firestoreUserData.status !== 'active') {
+      console.log('[SelectOutletPage E3 FF] Pre-conditions for fetching outlets not met. Bailing.', { hasUser: !!firestoreUserData, merchantId: firestoreUserData?.merchantId, status: firestoreUserData?.status });
       setIsLoadingOutlets(false);
       setAvailableOutlets([]);
       return;
@@ -147,8 +149,8 @@ export default function SelectOutletPage() {
     } else {
       if (!isLoadingUser) { 
          console.log('[SelectOutletPage E3] Conditions for outlet fetch not met, and user loading is false. Setting isLoadingOutlets to false and clearing outlets.');
-         setIsLoadingOutlets(false);
-         setAvailableOutlets([]); 
+         setIsLoadingOutlets(false); // Ensure outlets loading is false if not fetching
+         setAvailableOutlets([]); // Clear outlets if conditions aren't met
       } else {
         console.log('[SelectOutletPage E3] Conditions for outlet fetch not met, BUT user is still loading. Waiting for user loading to complete.');
       }
@@ -156,15 +158,16 @@ export default function SelectOutletPage() {
   }, [firestoreUserData, isLoadingUser, fetchOutletsForSelection]);
 
 
+  // Effect 4: Handle user status checks and redirections
   useEffect(() => {
     console.log('[SelectOutletPage E4] User status/role check useEffect triggered. authUser:', authUser, 'firestoreUserData:', firestoreUserData, 'isLoadingUser:', isLoadingUser);
     
-    if (isLoadingUser || authUser === false) { 
+    if (isLoadingUser || authUser === false) { // If authUser is false, auth state is not yet determined
         console.log('[SelectOutletPage E4] User data or auth state still loading/unknown. No action.');
         return; 
     }
 
-    if (authUser === null && !isLoadingUser) { 
+    if (authUser === null && !isLoadingUser) { // User is definitively logged out
         console.log('[SelectOutletPage E4] User logged out, redirecting to login.');
         router.push('/login');
         return;
@@ -173,7 +176,7 @@ export default function SelectOutletPage() {
     if (firestoreUserData) {
         if (firestoreUserData.role === 'superadmin') {
             console.log('[SelectOutletPage E4] User is superadmin, redirecting to /admin/users.');
-            router.push('/admin/users');
+            router.push('/admin/users'); // Superadmins don't select outlets
             return; 
         }
         if (firestoreUserData.status !== 'active') {
@@ -185,13 +188,14 @@ export default function SelectOutletPage() {
             } else if (firestoreUserData.status === 'inactive') {
                 toastTitle = 'Account Inactive';
                 toastDesc = 'Your account is currently inactive.';
-            } else if (firestoreUserData.status === 'status_undefined_from_firestore') { // This case was from login form
+            } else if (firestoreUserData.status === 'status_undefined_from_firestore') {
                 toastTitle = 'Account Configuration Error';
                 toastDesc = 'Your account status is not properly configured. Please contact support.';
             }
             
             toast({ title: toastTitle, description: toastDesc, variant: "destructive", duration: 7000 });
             console.log(`[SelectOutletPage E4] User status is ${firestoreUserData.status}, showing toast. Will not fetch outlets.`);
+            // No router.push here; user stays on page but outlets won't load. Message is shown.
             return; 
         }
         if (!firestoreUserData.merchantId) {
@@ -202,10 +206,17 @@ export default function SelectOutletPage() {
                 duration: 7000,
             });
             console.log('[SelectOutletPage E4] User has no merchantId. Will not fetch outlets.');
+             // No router.push here; user stays on page but outlets won't load.
              return;
         }
+        // If user is active, has merchantId, and is not superadmin, they should see outlet selection.
+        // If outlets are loaded and empty, the UI will show "No outlets found".
+        // If outlets are still loading, UI shows loader.
+        // If outlet fetch failed, toast is shown.
 
     } else if (authUser && !isLoadingUser && !firestoreUserData) {
+        // This means user is authenticated with Firebase Auth, but their document wasn't found in Firestore users collection.
+        // fetchFirestoreUser would have already shown a toast.
         console.log('[SelectOutletPage E4] Auth user exists, but no Firestore user data after loading. Error toast should have been shown in fetchFirestoreUser.');
     }
 
@@ -216,11 +227,19 @@ export default function SelectOutletPage() {
     if (typeof window !== 'undefined') {
       localStorage.setItem('selectedOutletId', outlet.id);
       localStorage.setItem('selectedOutletName', outlet.name);
+      // Use window.location.href for a full refresh to ensure AppLayout and AppHeader
+      // pick up the new localStorage values reliably.
+      window.location.href = '/dashboard';
+    } else {
+      // Fallback or should not happen in client component
+      router.push('/dashboard');
     }
-    router.push('/dashboard');
   };
 
+
   if (authUser === false || (authUser && isLoadingUser && !firestoreUserData) ) {
+    // authUser === false: Still checking auth
+    // authUser && isLoadingUser: Logged in, but Firestore user data still loading
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.28))] p-4 md:p-8">
         <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
@@ -230,6 +249,9 @@ export default function SelectOutletPage() {
   }
   
   if (authUser === null && !isLoadingUser) {
+     // User is definitively logged out, and we've finished the loading check for the user
+     // The E4 useEffect should have already redirected to /login.
+     // This is a fallback display in case redirection is slow or fails.
      return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.28))] p-4 md:p-8">
         <p className="text-muted-foreground">You are not logged in. Redirecting...</p>
@@ -237,7 +259,8 @@ export default function SelectOutletPage() {
     );
   }
 
-  if (isLoadingOutlets && firestoreUserData && firestoreUserData.status === 'active' && firestoreUserData.merchantId) {
+  // If firestoreUserData is loaded, and user status is active with a merchantId, but outlets are still loading
+  if (firestoreUserData && firestoreUserData.status === 'active' && firestoreUserData.merchantId && isLoadingOutlets) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.28))] p-4 md:p-8">
         <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
@@ -276,15 +299,18 @@ export default function SelectOutletPage() {
           )) : (
              <div className="text-center py-6 text-muted-foreground">
                 <p className="mb-2">
-                    {(firestoreUserData && firestoreUserData.status === 'active' && firestoreUserData.merchantId) 
+                    {isLoadingOutlets ? "Loading outlets..." : 
+                     (firestoreUserData && firestoreUserData.status === 'active' && firestoreUserData.merchantId) 
                         ? "No outlets found for your merchant account."
-                        : "Cannot load outlets. Please check account status or configuration."
+                        : `Cannot load outlets. (Status: ${firestoreUserData?.status || 'N/A'}, Merchant ID: ${firestoreUserData?.merchantId ? 'Set' : 'Not Set'})`
                     }
                 </p>
-                <p className="text-sm">
-                    Current Status: {firestoreUserData?.status || 'N/A'}. Merchant ID: {firestoreUserData?.merchantId ? 'Set' : 'Not Set'}.
-                    If issues persist, contact support. (Account: {authUser?.email || 'N/A'})
-                </p>
+                {(firestoreUserData?.status !== 'active' || !firestoreUserData?.merchantId) && !isLoadingUser && (
+                    <p className="text-sm">
+                        Please ensure your account is active and correctly configured.
+                        If issues persist, contact support. (Account: {authUser?.email || 'N/A'})
+                    </p>
+                )}
              </div>
           )}
            <Button variant="ghost" asChild className="w-full mt-6 text-primary hover:text-primary/90 hover:bg-primary/10">
@@ -301,3 +327,5 @@ export default function SelectOutletPage() {
     </div>
   );
 }
+
+    
