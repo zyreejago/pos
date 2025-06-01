@@ -11,15 +11,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Edit, TrendingUp, TrendingDown, Loader2 } from "lucide-react";
+import { Edit, Loader2 } from "lucide-react";
 import type { Product } from "@/types";
 import { useToast } from "@/hooks/use-toast";
-import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-
-// Placeholder for a potential stock adjustment dialog
-// import { StockAdjustmentDialog } from './stock-adjustment-dialog';
+import { db, serverTimestamp } from '@/lib/firebase';
+import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
+import { StockAdjustmentDialog } from './stock-adjustment-dialog'; // Import the new dialog
 
 interface StoredUser {
   id: string;
@@ -48,11 +45,18 @@ const getCurrentUserFromStorage = (): StoredUser | null => {
 export function InventoryTable() {
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [adjustingProductUnit, setAdjustingProductUnit] = useState<{productId: string, unitName: string} | null>(null);
   const { toast } = useToast();
   
   const [localCurrentUser, setLocalCurrentUser] = useState<StoredUser | null>(null);
   const [isClient, setIsClient] = useState(false);
+
+  const [isAdjustmentDialogOpen, setIsAdjustmentDialogOpen] = useState(false);
+  const [adjustingItemDetails, setAdjustingItemDetails] = useState<{
+    productId: string;
+    productName: string;
+    unitName: string;
+    currentStock: number;
+  } | null>(null);
 
   useEffect(() => {
     setIsClient(true);
@@ -70,7 +74,7 @@ export function InventoryTable() {
       const q = query(
         collection(db, "products"),
         where("merchantId", "==", localCurrentUser.merchantId),
-        orderBy("name", "asc") // Order by product name
+        orderBy("name", "asc")
       );
       const querySnapshot = await getDocs(q);
       const fetchedProducts: Product[] = [];
@@ -91,25 +95,58 @@ export function InventoryTable() {
       if (localCurrentUser && localCurrentUser.merchantId) {
         fetchProducts();
       } else {
-        // Client side, but no user or no merchantId, stop loading and clear products
         setIsLoading(false);
         setProducts([]);
-        if (!localCurrentUser) {
-            // toast({ title: "Info", description: "Please log in to view inventory.", variant: "default" });
-        } else if(!localCurrentUser.merchantId) {
-            // toast({ title: "Info", description: "User account not associated with a merchant.", variant: "default" });
-        }
       }
     }
   }, [isClient, localCurrentUser, fetchProducts]);
 
-  const handleOpenAdjustmentDialog = (productId: string, unitName: string) => {
-    setAdjustingProductUnit({ productId, unitName });
-    const productName = products.find(p => p.id === productId)?.name || 'Product';
-    toast({ title: "Info", description: `Stock adjustment feature for ${unitName} of ${productName} is not yet implemented.`})
+  const handleOpenAdjustmentDialog = (productId: string, productName: string, unitName: string, currentStock: number) => {
+    setAdjustingItemDetails({ productId, productName, unitName, currentStock });
+    setIsAdjustmentDialogOpen(true);
   };
 
-  if (!isClient || (isLoading && products.length === 0 && localCurrentUser)) { // Show initial loader or loading state
+  const handleStockAdjustment = async (newStock: number, reason?: string) => {
+    if (!adjustingItemDetails || !localCurrentUser?.merchantId) {
+      toast({ title: "Error", description: "Cannot adjust stock. Missing details or user info.", variant: "destructive" });
+      return;
+    }
+
+    const { productId, unitName: unitNameToAdjust, productName } = adjustingItemDetails;
+
+    try {
+      const productRef = doc(db, "products", productId);
+      const productToUpdate = products.find(p => p.id === productId);
+
+      if (!productToUpdate) {
+        toast({ title: "Error", description: `Product ${productName} not found.`, variant: "destructive" });
+        return;
+      }
+
+      const updatedUnits = productToUpdate.units.map(unit => {
+        if (unit.name === unitNameToAdjust) {
+          return { ...unit, stock: newStock };
+        }
+        return unit;
+      });
+
+      await updateDoc(productRef, {
+        units: updatedUnits,
+        updatedAt: serverTimestamp(),
+      });
+
+      toast({
+        title: "Stock Adjusted",
+        description: `Stock for ${productName} (${unitNameToAdjust}) updated to ${newStock}. Reason: ${reason || 'N/A'}`,
+      });
+      fetchProducts(); // Refresh the product list
+    } catch (error) {
+      console.error("Error adjusting stock:", error);
+      toast({ title: "Adjustment Failed", description: `Could not adjust stock for ${productName}.`, variant: "destructive" });
+    }
+  };
+
+  if (!isClient || (isLoading && products.length === 0 && localCurrentUser)) {
     return (
       <div className="flex flex-col items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
@@ -134,7 +171,6 @@ export function InventoryTable() {
     );
   }
 
-
   return (
     <>
       <div className="rounded-lg border shadow-sm bg-card">
@@ -148,20 +184,11 @@ export function InventoryTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {products.map((product) => {
-              const baseUnit = product.units.find(unit => unit.isBaseUnit);
-              const hasDerivedUnits = product.units.some(unit => !unit.isBaseUnit && unit.conversionFactor && unit.conversionFactor > 1);
-
-              let unitsToDisplay = product.units;
-
-              if (baseUnit && hasDerivedUnits) {
-                unitsToDisplay = product.units.filter(unit => unit.isBaseUnit);
-              }
-              
-              return unitsToDisplay.map((unit, displayUnitIndex) => (
+            {products.flatMap((product) => 
+              product.units.map((unit, unitIndex) => (
                 <TableRow key={`${product.id}-${unit.name}`}>
-                  {displayUnitIndex === 0 ? (
-                    <TableCell rowSpan={unitsToDisplay.length} className="font-medium align-top py-3">
+                  {unitIndex === 0 ? (
+                    <TableCell rowSpan={product.units.length} className="font-medium align-top py-3 border-b">
                       {product.name}
                     </TableCell>
                   ) : null}
@@ -171,14 +198,14 @@ export function InventoryTable() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleOpenAdjustmentDialog(product.id, unit.name)}
+                      onClick={() => handleOpenAdjustmentDialog(product.id, product.name, unit.name, unit.stock)}
                     >
                       <Edit className="mr-2 h-3 w-3" /> Sesuaikan Stok
                     </Button>
                   </TableCell>
                 </TableRow>
-              ));
-            })}
+              ))
+            )}
             {products.length === 0 && !isLoading && (
               <TableRow>
                 <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
@@ -189,21 +216,17 @@ export function InventoryTable() {
           </TableBody>
         </Table>
       </div>
-      {/*
-      {adjustingProductUnit && (
+      
+      {adjustingItemDetails && (
         <StockAdjustmentDialog
-          productName={products.find(p => p.id === adjustingProductUnit.productId)?.name || ''}
-          unitName={adjustingProductUnit.unitName}
-          currentStock={
-            products.find(p => p.id === adjustingProductUnit.productId)?.units.find(u => u.name === adjustingProductUnit.unitName)?.stock || 0
-          }
-          onSave={(newStock, reason) => handleStockAdjustment(adjustingProductUnit.productId, adjustingProductUnit.unitName, newStock, reason)}
-          onClose={() => setAdjustingProductUnit(null)}
+          isOpen={isAdjustmentDialogOpen}
+          onOpenChange={setIsAdjustmentDialogOpen}
+          productName={adjustingItemDetails.productName}
+          unitName={adjustingItemDetails.unitName}
+          currentStock={adjustingItemDetails.currentStock}
+          onSave={handleStockAdjustment}
         />
       )}
-      */}
     </>
   );
 }
-
-    
