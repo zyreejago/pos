@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MoreHorizontal, Edit3, Trash2, PlusCircle, Loader2 } from "lucide-react";
+import { MoreHorizontal, Edit3, Trash2, PlusCircle, Loader2, DollarSign, PackageCheck } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,8 +64,8 @@ const getAuthenticatedUserFromStorage = (): StoredUser | null => {
 export function ProductsTable() {
   const [products, setProducts] = useState<Product[]>([]);
   const [allSuppliers, setAllSuppliers] = useState<Supplier[]>([]);
-  const [isLoadingProducts, setIsLoadingProducts] = useState(true); // True by default to indicate loading until data is fetched or user is invalid
-  const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(true); // Same as above
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(true);
   
   const [editingProduct, setEditingProduct] = useState<Product | undefined>(undefined);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -85,7 +85,7 @@ export function ProductsTable() {
   const fetchProducts = useCallback(async () => {
     if (!currentUserLocal || !currentUserLocal.merchantId) {
       setProducts([]);
-      setIsLoadingProducts(false); // Stop loading if no valid user/merchantId
+      setIsLoadingProducts(false);
       return;
     }
     setIsLoadingProducts(true);
@@ -112,7 +112,7 @@ export function ProductsTable() {
   const fetchAllSuppliers = useCallback(async () => {
     if (!currentUserLocal || !currentUserLocal.merchantId) {
       setAllSuppliers([]);
-      setIsLoadingSuppliers(false); // Stop loading if no valid user/merchantId
+      setIsLoadingSuppliers(false);
       return;
     }
     setIsLoadingSuppliers(true);
@@ -136,11 +136,10 @@ export function ProductsTable() {
   }, [currentUserLocal]);
 
   useEffect(() => {
-    if (isClient && currentUserLocal) { // Only fetch if client and user is determined
+    if (isClient && currentUserLocal) { 
       fetchProducts();
       fetchAllSuppliers();
     } else if (isClient && !currentUserLocal) {
-      // If client and no user, stop loading states
       setIsLoadingProducts(false);
       setIsLoadingSuppliers(false);
     }
@@ -166,7 +165,7 @@ export function ProductsTable() {
   };
 
   const confirmDelete = async () => {
-    if (productToDelete && currentUserLocal) { // Ensure currentUserLocal for operations
+    if (productToDelete && currentUserLocal) { 
       try {
         await deleteDoc(doc(db, "products", productToDelete.id));
         toast({ title: "Product Deleted", description: `${productToDelete.name} has been deleted.`, variant: "destructive" });
@@ -181,7 +180,6 @@ export function ProductsTable() {
   };
   
   if (!isClient) {
-    // Server render and initial client render before useEffect populates isClient
     return (
       <div className="flex flex-col items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
@@ -191,7 +189,6 @@ export function ProductsTable() {
   }
 
   if (!currentUserLocal) {
-    // Client-side, but no authenticated user found in localStorage
     return (
       <>
         <div className="flex justify-end mb-4">
@@ -207,7 +204,6 @@ export function ProductsTable() {
   }
 
   if (!currentUserLocal.merchantId) {
-    // Client-side, user found, but no merchantId
      return (
       <>
         <div className="flex justify-end mb-4">
@@ -222,8 +218,6 @@ export function ProductsTable() {
     );
   }
 
-  // At this point, isClient is true and currentUserLocal exists with a merchantId.
-  // Now, we check the loading state for actual product/supplier data.
   if (isLoadingProducts || isLoadingSuppliers) {
     return (
       <div className="flex flex-col items-center justify-center h-64">
@@ -245,51 +239,53 @@ export function ProductsTable() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-[250px] font-headline">Name</TableHead>
-              <TableHead className="font-headline">Units</TableHead>
+              <TableHead className="font-headline text-right">Price (Base Unit)</TableHead>
+              <TableHead className="font-headline text-right">Stock (Base Unit)</TableHead>
               <TableHead className="font-headline">Supplier</TableHead>
               <TableHead className="font-headline">Barcode</TableHead>
               <TableHead className="w-[100px] text-right font-headline">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {products.map((product) => (
-              <TableRow key={product.id}>
-                <TableCell className="font-medium">{product.name}</TableCell>
-                <TableCell>
-                    {product.units.map(unit => (
-                        <Badge key={unit.name} variant="outline" className="mr-1 mb-1">
-                            {unit.name}: {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(unit.price)} (Stock: {unit.stock})
-                        </Badge>
-                    ))}
-                </TableCell>
-                <TableCell>
-                  {product.supplierId ? (allSuppliers.find(s => s.id === product.supplierId)?.name || product.supplierId) : (product.buyOwn ? 'Beli Sendiri' : 'N/A')}
-                </TableCell>
-                <TableCell>{product.barcode || 'N/A'}</TableCell>
-                <TableCell className="text-right">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" className="h-8 w-8 p-0">
-                        <span className="sr-only">Open menu</span>
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                      <DropdownMenuItem onClick={() => openEditDialog(product)}>
-                        <Edit3 className="mr-2 h-4 w-4" /> Edit
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleDeleteProduct(product)} className="text-destructive focus:text-destructive focus:bg-destructive/10">
-                        <Trash2 className="mr-2 h-4 w-4" /> Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
-            ))}
-            {products.length === 0 && !isLoadingProducts && ( // Check !isLoadingProducts here
+            {products.map((product) => {
+              const baseUnit = product.units.find(unit => unit.isBaseUnit);
+              const priceDisplay = baseUnit ? new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(baseUnit.price) : 'N/A';
+              const stockDisplay = baseUnit ? baseUnit.stock.toString() : 'N/A';
+
+              return (
+                <TableRow key={product.id}>
+                  <TableCell className="font-medium">{product.name}</TableCell>
+                  <TableCell className="text-right">{priceDisplay}</TableCell>
+                  <TableCell className="text-right">{stockDisplay}</TableCell>
+                  <TableCell>
+                    {product.supplierId ? (allSuppliers.find(s => s.id === product.supplierId)?.name || product.supplierId) : (product.buyOwn ? <Badge variant="secondary">Beli Sendiri</Badge> : 'N/A')}
+                  </TableCell>
+                  <TableCell>{product.barcode || 'N/A'}</TableCell>
+                  <TableCell className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" className="h-8 w-8 p-0">
+                          <span className="sr-only">Open menu</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                        <DropdownMenuItem onClick={() => openEditDialog(product)}>
+                          <Edit3 className="mr-2 h-4 w-4" /> Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleDeleteProduct(product)} className="text-destructive focus:text-destructive focus:bg-destructive/10">
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+            {products.length === 0 && !isLoadingProducts && (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
                   No products found. Start by adding a new product.
                 </TableCell>
               </TableRow>
@@ -315,7 +311,7 @@ export function ProductsTable() {
         </AlertDialogContent>
       </AlertDialog>
       
-      {isFormOpen && currentUserLocal && ( // Ensure currentUserLocal for ProductFormDialog context
+      {isFormOpen && currentUserLocal && ( 
         <ProductFormDialog
             product={editingProduct}
             suppliers={allSuppliers}
@@ -327,5 +323,3 @@ export function ProductsTable() {
     </>
   );
 }
-
-  
