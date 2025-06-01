@@ -56,15 +56,15 @@ export function LoginForm() {
 
         if (userDocSnap.exists()) {
           const userData = userDocSnap.data() as User;
+          
           // Store essential user data in localStorage.
-          // We use 'mockUser' key for now to maintain compatibility with AppLayout/AppHeader
-          // Ideally, this should be renamed or handled via context/state management.
-          localStorage.setItem('mockUser', JSON.stringify({ 
-            id: firebaseUser.uid, // Use actual UID
-            email: userData.email, 
-            displayName: userData.name, 
+          localStorage.setItem('mockUser', JSON.stringify({
+            id: firebaseUser.uid,
+            email: userData.email,
+            displayName: userData.name,
             role: userData.role,
-            merchantId: userData.merchantId 
+            merchantId: userData.merchantId,
+            status: userData.status === undefined ? 'status_undefined_from_firestore' : userData.status, // More explicit handling
           }));
 
           toast({
@@ -75,14 +75,14 @@ export function LoginForm() {
           if (userData.role === 'superadmin') {
             router.push("/admin/users");
           } else if (userData.role === 'admin' || userData.role === 'kasir') {
-            // Check if merchant is approved
+            // Re-check status from the freshly fetched userData, not from potentially stale localStorage
             if (userData.status === 'pending_approval') {
                 toast({
                     title: "Account Pending Approval",
                     description: "Your merchant account is still awaiting approval from the superadmin.",
                     variant: "destructive",
                 });
-                 await auth.signOut(); // Log out user
+                 await auth.signOut();
                  localStorage.removeItem('mockUser');
                  setIsLoading(false);
                  return;
@@ -93,14 +93,14 @@ export function LoginForm() {
                     description: "Your account is currently inactive. Please contact support.",
                     variant: "destructive",
                 });
-                 await auth.signOut(); // Log out user
+                 await auth.signOut();
                  localStorage.removeItem('mockUser');
                  setIsLoading(false);
                  return;
             }
             router.push("/select-outlet");
           } else {
-             router.push("/dashboard"); // Fallback
+             router.push("/dashboard");
           }
         } else {
           toast({
@@ -108,7 +108,7 @@ export function LoginForm() {
             description: "User data not found. Please contact support.",
             variant: "destructive",
           });
-          await auth.signOut(); // Log out user if their Firestore doc is missing
+          await auth.signOut();
         }
       }
     } catch (error: any) {

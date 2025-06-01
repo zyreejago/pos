@@ -18,7 +18,7 @@ interface StoredUser {
   displayName: string;
   role?: string;
   merchantId?: string;
-  status?: 'active' | 'pending_approval' | 'inactive';
+  status?: 'active' | 'pending_approval' | 'inactive' | 'status_undefined_from_firestore'; // Added possible debug status
 }
 
 const getCurrentUser = (): StoredUser | null => {
@@ -42,16 +42,13 @@ export default function SelectOutletPage() {
   const [availableOutlets, setAvailableOutlets] = useState<Outlet[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
-
-  // Debug state to display on UI
   const [debugInfo, setDebugInfo] = useState<any>({});
 
   useEffect(() => {
     console.log('[SelectOutletPage E1] Initializing, attempting to get current user.');
     const userFromStorage = getCurrentUser();
     setCurrentUser(userFromStorage);
-    setDebugInfo((prev:any) => ({ ...prev, currentUserInitial: userFromStorage ? { email: userFromStorage.email, role: userFromStorage.role, status: userFromStorage.status, merchantId: userFromStorage.merchantId } : 'null' }));
-
+    setDebugInfo((prev:any) => ({ ...prev, currentUserInitial: userFromStorage ? { email: userFromStorage.email, role: userFromStorage.role, status: userFromStorage.status || 'STATUS_NOT_IN_LOCALSTORAGE' , merchantId: userFromStorage.merchantId } : 'null' }));
 
     if (userFromStorage && userFromStorage.role === 'superadmin') {
       console.log('[SelectOutletPage E1] User is superadmin, redirecting to /admin/users.');
@@ -66,12 +63,26 @@ export default function SelectOutletPage() {
         setDebugInfo((prev:any) => ({ ...prev, isLoadingFinal: false, userRedirect: 'login' }));
         return;
     }
-     if (userFromStorage.status === 'pending_approval' || userFromStorage.status === 'inactive') {
+     if (userFromStorage.status === 'pending_approval' || userFromStorage.status === 'inactive' || userFromStorage.status === 'status_undefined_from_firestore') {
         console.log(`[SelectOutletPage E1] User status is ${userFromStorage.status}, showing toast and stopping loading.`);
+        let toastTitle = 'Account Issue';
+        let toastDesc = `Your account status is '${userFromStorage.status}'. Please contact support.`;
+        if (userFromStorage.status === 'pending_approval') {
+            toastTitle = 'Account Pending Approval';
+            toastDesc = 'Your account is currently pending approval.';
+        } else if (userFromStorage.status === 'inactive') {
+            toastTitle = 'Account Inactive';
+            toastDesc = 'Your account is currently inactive.';
+        } else if (userFromStorage.status === 'status_undefined_from_firestore') {
+            toastTitle = 'Account Configuration Error';
+            toastDesc = 'Your account status is not properly configured. Please contact support.';
+        }
+        
         toast({
-            title: `Account ${userFromStorage.status === 'pending_approval' ? 'Pending Approval' : 'Inactive'}`,
-            description: `Your account is currently ${userFromStorage.status}. Please contact support or wait for approval.`,
+            title: toastTitle,
+            description: toastDesc,
             variant: "destructive",
+            duration: 7000,
         });
         setIsLoading(false);
         setDebugInfo((prev:any) => ({ ...prev, isLoadingFinal: false, userStatusProblem: userFromStorage.status }));
@@ -81,10 +92,10 @@ export default function SelectOutletPage() {
 
   const fetchOutlets = useCallback(async () => {
     if (!currentUser || !currentUser.merchantId || currentUser.status !== 'active') {
-      console.log('[SelectOutletPage FF] Pre-conditions not met for fetch. Bailing.', { hasUser: !!currentUser, hasMerchantId: !!currentUser?.merchantId, isActive: currentUser?.status === 'active' });
+      console.log('[SelectOutletPage FF] Pre-conditions not met for fetch. Bailing.', { hasUser: !!currentUser, hasMerchantId: !!currentUser?.merchantId, isActive: currentUser?.status === 'active', actualStatus: currentUser?.status });
       setIsLoading(false);
       setAvailableOutlets([]);
-      setDebugInfo((prev:any) => ({ ...prev, fetchOutletsBail: true, isLoadingFinal: false, availableOutletsFinalCount: 0 }));
+      setDebugInfo((prev:any) => ({ ...prev, fetchOutletsBail: true, isLoadingFinal: false, availableOutletsFinalCount: 0, reasonForBail: `MerchantId: ${!!currentUser?.merchantId}, Status_is_Active: ${currentUser?.status === 'active'}, ActualStatus: ${currentUser?.status}` }));
       return;
     }
 
@@ -117,14 +128,13 @@ export default function SelectOutletPage() {
     } finally {
         console.log('[SelectOutletPage FF] fetchOutlets finally block. Setting isLoading to false.');
         setIsLoading(false);
-        setDebugInfo((prev:any) => ({ ...prev, isLoadingFinal: false })); 
+        setDebugInfo((prev:any) => ({ ...prev, isLoadingFinal: false }));
     }
-  }, [currentUser, toast]); // db, collection, query, where, orderBy, getDocs are stable
+  }, [currentUser, toast]);
 
   useEffect(() => {
-    console.log('[SelectOutletPage E2] Outlets fetch useEffect triggered. Current user:', currentUser ? currentUser.email : 'null');
-    // Corrected line: use currentUser instead of user
-    setDebugInfo((prev:any) => ({ ...prev, useEffect2Triggered: true, currentUserInEffect2: currentUser ? { email: currentUser.email, role: currentUser.role, status: currentUser.status, merchantId: currentUser.merchantId } : 'null'  }));
+    console.log('[SelectOutletPage E2] Outlets fetch useEffect triggered. Current user:', currentUser ? currentUser.email : 'null', 'Status:', currentUser ? currentUser.status : 'N/A');
+    setDebugInfo((prev:any) => ({ ...prev, useEffect2Triggered: true, currentUserInEffect2: currentUser ? { email: currentUser.email, role: currentUser.role, status: currentUser.status || 'STATUS_NOT_IN_LOCALSTORAGE', merchantId: currentUser.merchantId } : 'null'  }));
     if (currentUser) {
       if (currentUser.merchantId && currentUser.status === 'active') {
         console.log('[SelectOutletPage E2] User is active admin with merchantId. Calling fetchOutlets.');
@@ -134,9 +144,12 @@ export default function SelectOutletPage() {
         console.log('[SelectOutletPage E2] User loaded, but not eligible to fetch outlets.', { merchantId: currentUser.merchantId, status: currentUser.status });
         setIsLoading(false);
         setAvailableOutlets([]);
-        setDebugInfo((prev:any) => ({ ...prev, isLoadingFinal: false, notEligibleForFetch: true, availableOutletsFinalCount: 0 }));
-        if (currentUser.status && currentUser.status !== 'active') {
+        setDebugInfo((prev:any) => ({ ...prev, isLoadingFinal: false, notEligibleForFetch: true, availableOutletsFinalCount: 0, eligibilityCheck: `MerchantId: ${!!currentUser.merchantId}, Status_is_Active: ${currentUser.status === 'active'}, ActualStatus: ${currentUser.status}` }));
+        
+        if (currentUser.status && currentUser.status !== 'active' && currentUser.status !== 'status_undefined_from_firestore') {
           // Toast for pending/inactive is handled by the main useEffect
+        } else if (currentUser.status === 'status_undefined_from_firestore') {
+           // Toast already handled by main useEffect
         } else if (!currentUser.merchantId) {
           toast({
             title: "Account Configuration Issue",
@@ -147,15 +160,14 @@ export default function SelectOutletPage() {
         }
       }
     } else {
-      console.log('[SelectOutletPage E2] CurrentUser is null in outlets fetch useEffect. isLoading remains true or handled by E1.');
+      console.log('[SelectOutletPage E2] CurrentUser is null in outlets fetch useEffect.');
        setDebugInfo((prev:any) => ({ ...prev, currentUserNullInEffect2: true }));
-       if(isLoading) { 
+       if(isLoading) {
             setIsLoading(false);
             setDebugInfo((prev:any) => ({ ...prev, isLoadingFinalFromE2NullUser: false }));
        }
     }
-  }, [currentUser, fetchOutlets, toast]);
-
+  }, [currentUser, fetchOutlets, toast, isLoading]); // Added isLoading to dependencies of E2
 
   const handleSelectOutlet = (outlet: Outlet) => {
     if (typeof window !== 'undefined') {
@@ -164,26 +176,34 @@ export default function SelectOutletPage() {
     }
     router.push('/dashboard');
   };
-  
-  if (isLoading) { 
-    console.log('[SelectOutletPage Render] isLoading is true, rendering Loader2.');
+
+  const getDebugInfoForRender = () => {
+    const userForRender = getCurrentUser(); // Get fresh data for render time
+    return {
+      isLoading,
+      currentUserDebug: userForRender ? { email:userForRender.email, role:userForRender.role, status:userForRender.status || 'STATUS_NOT_IN_LOCALSTORAGE_RENDER', merchantId:userForRender.merchantId } : 'null_render',
+      availableOutletsCount: availableOutlets.length,
+      debugState: debugInfo,
+      outletNamesForRender: availableOutlets.map(o=>o.name)
+    };
+  };
+
+  if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.28))] p-4 md:p-8">
         <div className="fixed top-0 left-0 bg-yellow-200/80 p-2 text-xs text-black z-50 max-w-full overflow-auto backdrop-blur-sm">
-          <pre className="whitespace-pre-wrap break-all">{JSON.stringify({isLoading, currentUserDebug: currentUser ? {email:currentUser.email, role:currentUser.role, status:currentUser.status, merchantId:currentUser.merchantId} : 'null', availableOutletsCount: availableOutlets.length, debugState: debugInfo, outletNamesForRender: availableOutlets.map(o=>o.name) }, null, 2)}</pre>
+          <pre className="whitespace-pre-wrap break-all">{JSON.stringify(getDebugInfoForRender(), null, 2)}</pre>
         </div>
         <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
         <p className="text-muted-foreground">Loading your outlets...</p>
       </div>
     );
   }
-  console.log('[SelectOutletPage Render] isLoading is false. Available outlets count:', availableOutlets.length);
-
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.28))] p-4 md:p-8">
       <div className="fixed top-0 left-0 bg-yellow-200/80 p-2 text-xs text-black z-50 max-w-full overflow-auto backdrop-blur-sm">
-         <pre className="whitespace-pre-wrap break-all">{JSON.stringify({isLoading, currentUserDebug: currentUser ? {email:currentUser.email, role:currentUser.role, status:currentUser.status, merchantId:currentUser.merchantId} : 'null', availableOutletsCount: availableOutlets.length, debugState: debugInfo, outletNamesForRender: availableOutlets.map(o=>o.name) }, null, 2)}</pre>
+         <pre className="whitespace-pre-wrap break-all">{JSON.stringify(getDebugInfoForRender(), null, 2)}</pre>
       </div>
 
       <Card className="w-full max-w-2xl shadow-xl">
@@ -215,7 +235,7 @@ export default function SelectOutletPage() {
           {availableOutlets.length === 0 && (
              <div className="text-center py-6 text-muted-foreground">
                 <p className="mb-2">No outlets available for your account.</p>
-                <p className="text-sm">If you are an admin, please ensure your account is correctly configured and outlets have been added for your merchant.</p>
+                <p className="text-sm">If you are an admin, please ensure your account is correctly configured and outlets have been added for your merchant. (Check status: {currentUser?.status || 'N/A'})</p>
              </div>
           )}
            <Button variant="ghost" asChild className="w-full mt-6 text-primary hover:text-primary/90 hover:bg-primary/10">
@@ -232,4 +252,3 @@ export default function SelectOutletPage() {
     </div>
   );
 }
-
