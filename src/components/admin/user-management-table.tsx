@@ -110,6 +110,12 @@ export function UserManagementTable() {
               toastMessage = `User ${user.name} has been deactivated.`;
               break;
           case 'delete':
+              if (user.role === 'superadmin') {
+                toast({ title: "Action Denied", description: "Superadmin accounts cannot be deleted from here.", variant: "destructive" });
+                setShowConfirmDialog(false);
+                setConfirmAction(null);
+                return;
+              }
               await deleteDoc(userDocRef);
               // Consider also deleting user from Firebase Auth here if needed,
               // but that requires backend function or careful client-side handling.
@@ -153,7 +159,6 @@ export function UserManagementTable() {
         return;
     }
     
-    // Debugging Toast: Shows the UID of the currently logged-in superadmin
     toast({
       title: "Debug Info: Attempting Add Merchant",
       description: `Logged in Superadmin UID (Client): ${loggedInSuperAdmin.uid}. Adding merchant admin: ${data.email}`,
@@ -164,6 +169,7 @@ export function UserManagementTable() {
     let firebaseUserUID: string | null = null; 
 
     try {
+        // Create user in Firebase Authentication
         const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
         const firebaseUser = userCredential.user;
         firebaseUserUID = firebaseUser.uid; 
@@ -171,26 +177,28 @@ export function UserManagementTable() {
         if (firebaseUser) {
             await updateProfile(firebaseUser, { displayName: data.name });
 
+            // Data for the new merchant admin user in Firestore
             const newUserDoc: User = {
                 id: firebaseUser.uid, // UID of the new merchant admin
                 name: data.name,
                 email: data.email,
-                role: 'admin', 
-                status: 'active', 
-                merchantId: loggedInSuperAdmin.uid, // UID of the SUPERADMIN creating this user
+                role: 'admin', // Set role to 'admin'
+                status: 'active', // Set status to 'active'
+                merchantId: loggedInSuperAdmin.uid, // Use UID of the superadmin who is creating this user
                 createdAt: serverTimestamp(),
             };
             
+            // Save user data to Firestore
             await setDoc(doc(db, "users", firebaseUser.uid), newUserDoc);
 
-            toast({ title: "Merchant Added", description: `Merchant ${data.name} with admin ${data.email} has been created and activated. Merchant ID set to superadmin's UID.` });
+            toast({ title: "Merchant Admin Added", description: `Merchant admin ${data.name} (${data.email}) has been created and activated under superadmin ${loggedInSuperAdmin.displayName || loggedInSuperAdmin.email}.` });
             setIsMerchantFormOpen(false);
             fetchUsers();
         }
     } catch (error: any) {
-        console.error("Error adding new merchant: ", error);
+        console.error("Error adding new merchant admin: ", error);
         let errorMessage = "An unexpected error occurred. Please try again.";
-        const clientAuthUID = loggedInSuperAdmin ? loggedInSuperAdmin.uid : 'Unknown (Client)';
+        const clientAuthUID = loggedInSuperAdmin.uid; // Already checked for null
 
         if (error.name === 'FirebaseError' || error.constructor.name === 'FirebaseError') { 
             if (error.message && error.message.toLowerCase().includes('permission-denied') && error.message.toLowerCase().includes('firestore')) {
@@ -256,7 +264,7 @@ export function UserManagementTable() {
     <>
       <div className="flex justify-end mb-4">
         <Button onClick={() => setIsMerchantFormOpen(true)}>
-          <UserPlus className="mr-2 h-4 w-4" /> Add New Merchant
+          <UserPlus className="mr-2 h-4 w-4" /> Add New Merchant Admin
         </Button>
       </div>
       <div className="rounded-lg border shadow-sm bg-card">
@@ -267,7 +275,7 @@ export function UserManagementTable() {
               <TableHead className="font-headline">Email</TableHead>
               <TableHead className="font-headline">Role</TableHead>
               <TableHead className="font-headline">Status</TableHead>
-              <TableHead className="font-headline">Merchant ID</TableHead>
+              <TableHead className="font-headline">Associated Merchant ID</TableHead>
               <TableHead className="text-right font-headline">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -321,6 +329,11 @@ export function UserManagementTable() {
                           <Trash2 className="mr-2 h-4 w-4" /> Delete User Data
                         </DropdownMenuItem>
                       )}
+                      {user.role === 'superadmin' && user.id !== auth.currentUser?.uid && (
+                        <DropdownMenuItem disabled className="text-muted-foreground">
+                          Cannot modify other superadmins
+                        </DropdownMenuItem>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>
@@ -367,5 +380,6 @@ export function UserManagementTable() {
     </>
   );
 }
+    
 
     
