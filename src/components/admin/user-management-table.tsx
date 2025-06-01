@@ -34,9 +34,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { MerchantFormDialog } from './merchant-form-dialog';
-import { auth, db, serverTimestamp } from '@/lib/firebase'; // Import Firebase config
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { collection, doc, setDoc, getDocs, updateDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
+import { auth, db, serverTimestamp } from '@/lib/firebase'; 
+import { createUserWithEmailAndPassword, updateProfile, deleteUser as deleteAuthUser } from 'firebase/auth';
+import { collection, doc, setDoc, getDocs, updateDoc, deleteDoc, query, orderBy, writeBatch } from 'firebase/firestore';
 
 export function UserManagementTable() {
   const [users, setUsers] = useState<User[]>([]);
@@ -50,7 +50,6 @@ export function UserManagementTable() {
     setIsLoading(true);
     try {
       const usersCollectionRef = collection(db, "users");
-      // Superadmin sees all users, potentially ordered by role or creation date
       const q = query(usersCollectionRef, orderBy("createdAt", "desc"));
       const querySnapshot = await getDocs(q);
       const fetchedUsers: User[] = [];
@@ -58,9 +57,13 @@ export function UserManagementTable() {
         fetchedUsers.push({ id: doc.id, ...doc.data() } as User);
       });
       setUsers(fetchedUsers);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching users: ", error);
-      toast({ title: "Fetch Failed", description: "Could not load user data.", variant: "destructive" });
+      toast({ 
+        title: "Fetch Failed", 
+        description: `Could not load user data: ${error.message || 'Unknown error'}. Check Firestore rules.`, 
+        variant: "destructive" 
+      });
     }
     setIsLoading(false);
   }, [toast]);
@@ -88,7 +91,6 @@ export function UserManagementTable() {
     if (!confirmAction) return;
     const { user, actionType } = confirmAction;
     const userDocRef = doc(db, "users", user.id);
-
     let toastMessage = "";
 
     try {
@@ -106,20 +108,25 @@ export function UserManagementTable() {
               toastMessage = `User ${user.name} has been deactivated.`;
               break;
           case 'delete':
-              // Deleting Firestore document. Auth user deletion needs Admin SDK or manual intervention.
+              // This only deletes Firestore document. Auth user deletion needs Admin SDK or manual Firebase Console action.
+              // Frontend client SDK cannot delete other users' auth accounts.
               await deleteDoc(userDocRef);
-              toastMessage = `User ${user.name}'s data has been deleted from the database.`;
+              toastMessage = `User ${user.name}'s data has been deleted from the database. Their authentication account may still exist.`;
               toast({ title: "User Data Deleted", description: toastMessage, variant: "destructive" });
-              fetchUsers(); // Refresh list
+              fetchUsers(); 
               setShowConfirmDialog(false);
               setConfirmAction(null);
               return; 
       }
       toast({ title: "Action Successful", description: toastMessage });
-      fetchUsers(); // Refresh list
-    } catch (error) {
+      fetchUsers(); 
+    } catch (error: any) {
         console.error(`Error performing action ${actionType} for user ${user.id}:`, error);
-        toast({ title: "Action Failed", description: `Could not ${actionType} user. Please try again.`, variant: "destructive" });
+        toast({ 
+            title: "Action Failed", 
+            description: `Could not ${actionType} user: ${error.message || 'Unknown error'}.`, 
+            variant: "destructive" 
+        });
     }
 
     setShowConfirmDialog(false);
@@ -135,53 +142,88 @@ export function UserManagementTable() {
         toast({ title: "Error", description: "Password is required to create a new merchant admin.", variant: "destructive" });
         return;
     }
-    setIsLoading(true); // Consider a specific loading state for the dialog/button
+    setIsLoading(true);
+    let firebaseUserUID: string | null = null; 
+
     try {
-        // 1. Create user in Firebase Authentication
         const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
         const firebaseUser = userCredential.user;
+        firebaseUserUID = firebaseUser.uid; 
 
         if (firebaseUser) {
-            // Optionally update Firebase Auth profile display name
             await updateProfile(firebaseUser, { displayName: data.name });
 
-            // 2. Create user document in Firestore
             const newUserDoc: User = {
                 id: firebaseUser.uid,
                 name: data.name,
                 email: data.email,
-                role: 'admin', // New user created by superadmin is a merchant admin
-                status: 'active', // Active by default when created by superadmin
-                merchantId: firebaseUser.uid, // Merchant's own UID becomes their merchantId
+                role: 'admin', 
+                status: 'active', 
+                merchantId: firebaseUser.uid, 
                 createdAt: serverTimestamp(),
             };
             await setDoc(doc(db, "users", firebaseUser.uid), newUserDoc);
 
             toast({ title: "Merchant Added", description: `Merchant ${data.name} with admin ${data.email} has been created and activated.` });
-            setIsMerchantFormOpen(false); // Close dialog
-            fetchUsers(); // Refresh the user list from Firestore
+            setIsMerchantFormOpen(false);
+            fetchUsers();
         }
     } catch (error: any) {
         console.error("Error adding new merchant: ", error);
-        let errorMessage = "Failed to add merchant. Please try again.";
-        if (error.code === 'auth/email-already-in-use') {
-            errorMessage = "This email is already registered.";
-        } else if (error.code === 'auth/weak-password') {
-            errorMessage = "The password is too weak. Please choose a stronger password.";
+        let errorMessage = "An unexpected error occurred. Please try again.";
+
+        if (error.name === 'FirebaseError') {
+            switch (error.code) {
+                case 'auth/email-already-in-use':
+                    errorMessage = "This email is already registered in Authentication.";
+                    // Note: The auth user was still created if this error happens *after* auth creation,
+                    // which isn't the case here but good to be aware of error flow.
+                    break;
+                case 'auth/weak-password':
+                    errorMessage = "The password is too weak. Please choose a stronger password.";
+                    break;
+                // Firestore specific errors might not always have 'permission-denied' as code from client SDK like this
+                // but can be caught by checking message or if the error object has a 'firestore' context.
+                case 'permission-denied': // More common for Firestore rules
+                    errorMessage = "Failed to save merchant data to Firestore: Permission denied. Please check Firestore rules and superadmin data.";
+                    // If auth user was created but Firestore failed, we might want to delete the auth user.
+                    // This is an advanced operation and requires careful handling (e.g. re-authenticating admin).
+                    // For simplicity, we are not doing that here. The superadmin would need to manually delete the auth user.
+                    if (firebaseUserUID) {
+                         errorMessage += ` Auth user ${data.email} was created but Firestore data failed. Manual cleanup of auth user may be needed.`;
+                    }
+                    break;
+                default:
+                    if (error.message && error.message.toLowerCase().includes('firestore')) {
+                        errorMessage = `Firestore error: ${error.message}. Check rules and data.`;
+                         if (firebaseUserUID) {
+                            errorMessage += ` Auth user ${data.email} was created. Manual cleanup may be needed.`;
+                        }
+                    } else if (error.message && error.message.toLowerCase().includes('auth')) {
+                        errorMessage = `Authentication error: ${error.message}`;
+                    } else {
+                        errorMessage = `Failed to add merchant: ${error.message || 'Unknown error'}`;
+                    }
+                    break;
+            }
+        } else {
+             errorMessage = `Failed to add merchant: ${error.toString()}`;
         }
+        
         toast({ title: "Add Merchant Failed", description: errorMessage, variant: "destructive" });
     }
-    setIsLoading(false); // Reset loading state
+    setIsLoading(false);
   };
   
-  const getStatusBadgeVariant = (status: User['status']) => {
+  const getStatusBadgeVariant = (status?: User['status']) => { // Made status optional for safety
     if (status === 'active') return 'default';
     if (status === 'pending_approval') return 'secondary';
     if (status === 'inactive') return 'destructive';
     return 'outline';
   };
   
-  const getRoleDisplayName = (role: UserRole) => {
+  const getRoleDisplayName = (role?: UserRole) => { // Made role optional
+    if (!role) return 'N/A';
     switch(role) {
         case 'superadmin': return 'Super Admin';
         case 'admin': return 'Merchant Admin';
@@ -221,8 +263,8 @@ export function UserManagementTable() {
           <TableBody>
             {users.map((user) => (
               <TableRow key={user.id}>
-                <TableCell className="font-medium">{user.name}</TableCell>
-                <TableCell>{user.email}</TableCell>
+                <TableCell className="font-medium">{user.name || 'N/A'}</TableCell>
+                <TableCell>{user.email || 'N/A'}</TableCell>
                 <TableCell>
                     <Badge variant="outline" className="capitalize">{getRoleDisplayName(user.role)}</Badge>
                 </TableCell>
@@ -247,15 +289,9 @@ export function UserManagementTable() {
                           <CheckCircle className="mr-2 h-4 w-4" /> Approve Merchant
                         </DropdownMenuItem>
                       )}
-                      {/* Edit details might require a separate, more generic user form or direct fields */}
-                      {/* 
-                      <DropdownMenuItem onClick={() => {}}> 
-                        <Edit3 className="mr-2 h-4 w-4" /> Edit Details 
-                      </DropdownMenuItem> 
-                      */}
                       {(user.role === 'admin' || user.role === 'superadmin') && (
                         <DropdownMenuItem onClick={() => handleChangePassword(user)}>
-                          <KeyRound className="mr-2 h-4 w-4" /> Change Password
+                          <KeyRound className="mr-2 h-4 w-4" /> Change Password (Admin)
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuSeparator />
