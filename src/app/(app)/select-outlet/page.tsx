@@ -28,7 +28,7 @@ const getCurrentUser = (): StoredUser | null => {
       try {
         return JSON.parse(storedUserStr) as StoredUser;
       } catch (e) {
-        console.error("Failed to parse user from localStorage in SelectOutletPage", e);
+        console.error("[SelectOutletPage E1] Failed to parse user from localStorage", e);
         return null;
       }
     }
@@ -40,81 +40,100 @@ export default function SelectOutletPage() {
   const router = useRouter();
   const { toast } = useToast();
   const [availableOutlets, setAvailableOutlets] = useState<Outlet[]>([]);
-  const [isLoading, setIsLoading] = useState(true); // Default to true
+  const [isLoading, setIsLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
 
+  // Debug state to display on UI
+  const [debugInfo, setDebugInfo] = useState<any>({});
+
   useEffect(() => {
-    console.log('[SelectOutletPage] Initializing, attempting to get current user.');
+    console.log('[SelectOutletPage E1] Initializing, attempting to get current user.');
     const user = getCurrentUser();
     setCurrentUser(user);
+    setDebugInfo((prev:any) => ({ ...prev, currentUserInitial: user ? { email: user.email, role: user.role, status: user.status, merchantId: user.merchantId } : 'null' }));
+
 
     if (user && user.role === 'superadmin') {
-      console.log('[SelectOutletPage] User is superadmin, redirecting to /admin/users.');
+      console.log('[SelectOutletPage E1] User is superadmin, redirecting to /admin/users.');
       router.push('/admin/users');
       return;
     }
     if (!user) {
-        console.log('[SelectOutletPage] No user found, redirecting to /login.');
+        console.log('[SelectOutletPage E1] No user found, redirecting to /login.');
         toast({title: "Session Expired", description: "Please log in again.", variant: "destructive"});
         router.push('/login');
-        setIsLoading(false); // Stop loading as we are redirecting
+        setIsLoading(false);
+        setDebugInfo((prev:any) => ({ ...prev, isLoadingFinal: false, userRedirect: 'login' }));
         return;
     }
      if (user.status === 'pending_approval' || user.status === 'inactive') {
-        console.log(`[SelectOutletPage] User status is ${user.status}, showing toast and stopping loading.`);
+        console.log(`[SelectOutletPage E1] User status is ${user.status}, showing toast and stopping loading.`);
         toast({
             title: `Account ${user.status === 'pending_approval' ? 'Pending Approval' : 'Inactive'}`,
             description: `Your account is currently ${user.status}. Please contact support or wait for approval.`,
             variant: "destructive",
         });
-        setIsLoading(false); // Stop loading as they can't proceed
+        setIsLoading(false);
+        setDebugInfo((prev:any) => ({ ...prev, isLoadingFinal: false, userStatusProblem: user.status }));
         return;
     }
-    // If user is loaded, and not redirected, isLoading will be handled by the outlets fetching useEffect
   }, [router, toast]);
 
   const fetchOutlets = useCallback(async () => {
     if (!currentUser || !currentUser.merchantId || currentUser.status !== 'active') {
-      console.log('[SelectOutletPage] fetchOutlets: Pre-conditions not met (no currentUser, merchantId, or status not active). Bailing.', currentUser);
+      console.log('[SelectOutletPage FF] Pre-conditions not met for fetch. Bailing.', { hasUser: !!currentUser, hasMerchantId: !!currentUser?.merchantId, isActive: currentUser?.status === 'active' });
       setIsLoading(false);
       setAvailableOutlets([]);
+      setDebugInfo((prev:any) => ({ ...prev, fetchOutletsBail: true, isLoadingFinal: false, availableOutletsFinalCount: 0 }));
       return;
     }
 
-    console.log(`[SelectOutletPage] fetchOutlets: Fetching for merchantId: ${currentUser.merchantId}`);
-    setIsLoading(true); // Explicitly set true when fetch starts
+    const merchantIdForQuery = currentUser.merchantId;
+    console.log(`[SelectOutletPage FF] Starting fetch for merchantId: ${merchantIdForQuery}`);
+    setDebugInfo((prev:any) => ({ ...prev, fetchStarted: true, merchantIdForQuery }));
+    setIsLoading(true);
+    setDebugInfo((prev:any) => ({ ...prev, isLoadingDuringFetch: true }));
+
     try {
       const q = query(
         collection(db, "outlets"),
-        where("merchantId", "==", currentUser.merchantId),
+        where("merchantId", "==", merchantIdForQuery),
         orderBy("name", "asc")
       );
+      console.log(`[SelectOutletPage FF] Firestore query using merchantId: "${merchantIdForQuery}"`);
       const querySnapshot = await getDocs(q);
       const fetchedOutlets: Outlet[] = [];
       querySnapshot.forEach((doc) => {
         fetchedOutlets.push({ id: doc.id, ...doc.data() } as Outlet);
       });
-      console.log('[SelectOutletPage] fetchOutlets: Fetched outlets:', fetchedOutlets);
+      console.log('[SelectOutletPage FF] Firestore query completed. Fetched outlets count:', fetchedOutlets.length, 'Outlets:', fetchedOutlets.map(o => o.name));
       setAvailableOutlets(fetchedOutlets);
-    } catch (error) {
-      console.error("Error fetching outlets for selection: ", error);
-      toast({ title: "Fetch Failed", description: "Could not load your outlets. Please try again.", variant: "destructive" });
+      setDebugInfo((prev:any) => ({ ...prev, fetchedOutletsCount: fetchedOutlets.length, fetchedOutletNames: fetchedOutlets.map(o=>o.name) }));
+    } catch (error: any) {
+      console.error("[SelectOutletPage FF] Error fetching outlets for selection: ", error);
+      toast({ title: "Fetch Failed", description: `Could not load your outlets. Error: ${error.message}`, variant: "destructive" });
       setAvailableOutlets([]);
+      setDebugInfo((prev:any) => ({ ...prev, fetchError: error.message, fetchedOutletsCount: 0 }));
     } finally {
-        setIsLoading(false); // Ensure isLoading is set to false in all outcomes
+        console.log('[SelectOutletPage FF] fetchOutlets finally block. Setting isLoading to false.');
+        setIsLoading(false);
+        setDebugInfo((prev:any) => ({ ...prev, isLoadingFinal: false, availableOutletsFinalCount: availableOutlets.length })); // Note: availableOutlets might not be updated yet here
     }
   }, [currentUser, toast]); // db, collection, query, where, orderBy, getDocs are stable
 
   useEffect(() => {
-    console.log('[SelectOutletPage] Outlets fetch useEffect triggered. Current user:', currentUser);
+    console.log('[SelectOutletPage E2] Outlets fetch useEffect triggered. Current user:', currentUser ? currentUser.email : 'null');
+    setDebugInfo((prev:any) => ({ ...prev, useEffect2Triggered: true, currentUserInEffect2: currentUser ? { email: user.email, role: user.role, status: user.status, merchantId: user.merchantId } : 'null'  }));
     if (currentUser) {
       if (currentUser.merchantId && currentUser.status === 'active') {
-        console.log('[SelectOutletPage] User is active admin with merchantId. Calling fetchOutlets.');
+        console.log('[SelectOutletPage E2] User is active admin with merchantId. Calling fetchOutlets.');
+        setDebugInfo((prev:any) => ({ ...prev, callingFetchOutlets: true }));
         fetchOutlets();
       } else {
-        console.log('[SelectOutletPage] User loaded, but not eligible to fetch outlets (missing merchantId or inactive).', { merchantId: currentUser.merchantId, status: currentUser.status });
+        console.log('[SelectOutletPage E2] User loaded, but not eligible to fetch outlets.', { merchantId: currentUser.merchantId, status: currentUser.status });
         setIsLoading(false);
         setAvailableOutlets([]);
+        setDebugInfo((prev:any) => ({ ...prev, isLoadingFinal: false, notEligibleForFetch: true, availableOutletsFinalCount: 0 }));
         if (currentUser.status && currentUser.status !== 'active') {
           // Toast for pending/inactive is handled by the main useEffect
         } else if (!currentUser.merchantId) {
@@ -127,15 +146,14 @@ export default function SelectOutletPage() {
         }
       }
     } else {
-      // currentUser is null, initial useEffect might still be running or redirecting.
-      // If not redirecting (e.g. user object malformed but not null),
-      // this path could lead to isLoading not being set to false.
-      // However, the initial useEffect should handle redirect if !user.
-      // If this else block is hit without a redirect, it implies a state issue.
-      console.log('[SelectOutletPage] CurrentUser is null in outlets fetch useEffect. This might be an intermediate state.');
-      // It's safer to set isLoading to false if currentUser is definitively null and not handled by other logic
-      // But usually, the first useEffect redirects if user is null.
-      // If it persists here, it implies user should have been redirected.
+      console.log('[SelectOutletPage E2] CurrentUser is null in outlets fetch useEffect. isLoading remains true or handled by E1.');
+       setDebugInfo((prev:any) => ({ ...prev, currentUserNullInEffect2: true }));
+       // If !currentUser, the first useEffect should have redirected or set isLoading to false.
+       // Setting isLoading to false here too as a safeguard if E1 didn't catch it.
+       if(isLoading) { // Only set if it's somehow still true
+            setIsLoading(false);
+            setDebugInfo((prev:any) => ({ ...prev, isLoadingFinalFromE2NullUser: false }));
+       }
     }
   }, [currentUser, fetchOutlets, toast]);
 
@@ -149,17 +167,31 @@ export default function SelectOutletPage() {
   };
   
   // This isLoading check is for the main page content
-  if (isLoading) {
+  if (isLoading) { // Render loader if isLoading is true
+    console.log('[SelectOutletPage Render] isLoading is true, rendering Loader2.');
+    // setDebugInfo((prev:any) => ({ ...prev, renderState: 'loading' })); // Avoid setState in render
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.28))] p-4 md:p-8">
+        {/* Debug Info Display */}
+        <div className="fixed top-0 left-0 bg-yellow-200 p-2 text-xs text-black z-50 max-w-full overflow-auto">
+          <pre>{JSON.stringify({isLoading, currentUserDebug: currentUser ? {email:currentUser.email, role:currentUser.role, status:currentUser.status, merchantId:currentUser.merchantId} : null, availableOutletsCount: availableOutlets.length, debugState: debugInfo }, null, 2)}</pre>
+        </div>
         <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
         <p className="text-muted-foreground">Loading your outlets...</p>
       </div>
     );
   }
+  console.log('[SelectOutletPage Render] isLoading is false. Available outlets count:', availableOutlets.length);
+  // setDebugInfo((prev:any) => ({ ...prev, renderState: 'content', finalOutletCountForRender: availableOutlets.length })); // Avoid setState in render
+
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.28))] p-4 md:p-8">
+      {/* Debug Info Display */}
+      <div className="fixed top-0 left-0 bg-yellow-200 p-2 text-xs text-black z-50 max-w-full overflow-auto">
+        <pre>{JSON.stringify({isLoading, currentUserDebug: currentUser ? {email:currentUser.email, role:currentUser.role, status:currentUser.status, merchantId:currentUser.merchantId} : null, availableOutletsCount: availableOutlets.length, debugState: debugInfo, outletNames: availableOutlets.map(o=>o.name)}, null, 2)}</pre>
+      </div>
+
       <Card className="w-full max-w-2xl shadow-xl">
         <CardHeader className="text-center">
           <Store className="mx-auto h-12 w-12 text-primary mb-4" />
