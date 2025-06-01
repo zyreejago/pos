@@ -2,20 +2,15 @@
 'use client';
 
 import type { Metadata } from 'next';
-import React, { useState } from 'react'; // Changed from React.useState and added React import
+import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { PlusCircle, Trash2, Search, DollarSign, QrCode, CreditCard, ShoppingCart } from 'lucide-react'; // Added ShoppingCart
+import { PlusCircle, Trash2, Search, DollarSign, QrCode, CreditCard, ShoppingCart } from 'lucide-react';
 import Image from 'next/image';
-import { Badge } from '@/components/ui/badge'; // Added Badge import
-
-export const metadata: Metadata = {
-  title: 'Kasir (POS) - Toko App',
-  description: 'Point of Sale interface for processing transactions.',
-};
+import { Badge } from '@/components/ui/badge';
 
 // Mock product data
 const mockProducts = [
