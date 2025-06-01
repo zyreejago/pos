@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from 'react';
@@ -209,14 +210,15 @@ export function ProductsTable() {
         </AlertDialogContent>
       </AlertDialog>
       
-      {isFormOpen && !triggerButton && ( // Conditionally render the dialog if controlled by state and no trigger is passed
+      {isFormOpen && ( // Conditionally render the dialog if controlled by state
         <ProductFormDialog
             product={editingProduct}
             suppliers={mockSuppliers}
             onSave={handleSaveProduct}
-            triggerButton={<></>} // This instance's trigger is not visible; dialog is controlled by isFormOpen
+            triggerButton={<div style={{display: 'none'}} />} // This instance's trigger is not visible; dialog is controlled by isFormOpen
         />
       )}
     </>
   );
 }
+
