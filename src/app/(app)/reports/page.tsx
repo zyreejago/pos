@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Metadata } from 'next';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,7 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import type { Transaction, Outlet, User } from '@/types';
 
 
-// Mock data
+// Mock data for outlets and kasirs (can remain top-level as they don't use new Date())
 const mockOutlets: Outlet[] = [
   { id: "outlet_1", name: "Main Outlet", address: "Jl. Sudirman No. 123", merchantId: "merch_1" },
   { id: "outlet_2", name: "Branch Kemang", address: "Jl. Kemang Raya No. 45", merchantId: "merch_1" },
@@ -39,25 +40,40 @@ const mockKasirs: User[] = [
   { id: "kasir_1", name: "Andi Setiawan", email: "", role:"kasir", status: "active" },
   { id: "kasir_2", name: "Bunga Citra", email: "", role: "kasir", status: "active" },
 ];
-const mockTransactions: Transaction[] = [
-  { id: "txn_001", outletId: "outlet_1", kasirId: "kasir_1", timestamp: subDays(new Date(), 1), totalAmount: 150000, paymentMethod: "cash", items:[], subtotal:0, discountAmount:0, ppnAmount:0, merchantId: "merch_1" },
-  { id: "txn_002", outletId: "outlet_2", kasirId: "kasir_2", timestamp: subDays(new Date(), 2), totalAmount: 250000, paymentMethod: "qris", items:[], subtotal:0, discountAmount:0, ppnAmount:0, merchantId: "merch_1" },
-  { id: "txn_003", outletId: "outlet_1", kasirId: "kasir_1", timestamp: subDays(new Date(), 0), totalAmount: 80000, paymentMethod: "cash", items:[], subtotal:0, discountAmount:0, ppnAmount:0, merchantId: "merch_1" },
-];
 
 
 export default function ReportsPage() {
-  const [dateRange, setDateRange] = useState<DateRange | undefined>({
-    from: subDays(new Date(), 7),
-    to: new Date(),
-  });
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
   const [selectedOutlet, setSelectedOutlet] = useState<string>("all");
   const [selectedKasir, setSelectedKasir] = useState<string>("all");
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("all");
-  const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>(mockTransactions);
+  
+  const [clientSideMockTransactions, setClientSideMockTransactions] = useState<Transaction[]>([]);
+  const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    // Generate mock transactions on the client side
+    const initialMockTransactions: Transaction[] = [
+      { id: "txn_001", outletId: "outlet_1", kasirId: "kasir_1", timestamp: subDays(new Date(), 1), totalAmount: 150000, paymentMethod: "cash", items:[], subtotal:0, discountAmount:0, ppnAmount:0, merchantId: "merch_1" },
+      { id: "txn_002", outletId: "outlet_2", kasirId: "kasir_2", timestamp: subDays(new Date(), 2), totalAmount: 250000, paymentMethod: "qris", items:[], subtotal:0, discountAmount:0, ppnAmount:0, merchantId: "merch_1" },
+      { id: "txn_003", outletId: "outlet_1", kasirId: "kasir_1", timestamp: subDays(new Date(), 0), totalAmount: 80000, paymentMethod: "cash", items:[], subtotal:0, discountAmount:0, ppnAmount:0, merchantId: "merch_1" },
+    ];
+    setClientSideMockTransactions(initialMockTransactions);
+    setFilteredTransactions(initialMockTransactions);
+
+    // Initialize dateRange on the client side
+    setDateRange({
+      from: subDays(new Date(), 7),
+      to: new Date(),
+    });
+
+    setIsLoading(false);
+  }, []); // Empty dependency array ensures this runs once on mount
 
   const applyFilters = () => {
-    let transactions = mockTransactions;
+    if (isLoading) return;
+    let transactions = clientSideMockTransactions;
     if (dateRange?.from && dateRange?.to) {
       transactions = transactions.filter(t => new Date(t.timestamp) >= dateRange.from! && new Date(t.timestamp) <= dateRange.to!);
     }
@@ -74,18 +90,19 @@ export default function ReportsPage() {
   };
   
   const resetFilters = () => {
+    if (isLoading) return;
     setDateRange({ from: subDays(new Date(), 7), to: new Date() });
     setSelectedOutlet("all");
     setSelectedKasir("all");
     setSelectedPaymentMethod("all");
-    setFilteredTransactions(mockTransactions);
+    setFilteredTransactions(clientSideMockTransactions);
   };
 
   const exportToExcel = () => {
-    // This is a mock export. In a real app, use a library like 'xlsx' or a server-side export.
+    if (isLoading) return;
     const dataToExport = filteredTransactions.map(t => ({
       ID: t.id,
-      Date: format(new Date(t.timestamp), "yyyy-MM-dd HH:mm"),
+      Date: format(t.timestamp, "yyyy-MM-dd HH:mm"), // Corrected format call
       Outlet: mockOutlets.find(o => o.id === t.outletId)?.name || 'N/A',
       Kasir: mockKasirs.find(k => k.id === t.kasirId)?.name || 'N/A',
       'Payment Method': t.paymentMethod,
@@ -104,6 +121,13 @@ export default function ReportsPage() {
     document.body.removeChild(link);
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-6 items-center justify-center min-h-[calc(100vh-theme(spacing.28))]">
+        <p className="text-muted-foreground text-lg">Loading report data...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -128,6 +152,7 @@ export default function ReportsPage() {
                   id="date-range"
                   variant={"outline"}
                   className="w-full justify-start text-left font-normal"
+                  disabled={!dateRange} // Disable if dateRange is not yet initialized
                 >
                   <CalendarIcon className="mr-2 h-4 w-4" />
                   {dateRange?.from ? (
@@ -233,7 +258,7 @@ export default function ReportsPage() {
                 {filteredTransactions.length > 0 ? (
                   filteredTransactions.map((transaction) => (
                     <TableRow key={transaction.id}>
-                      <TableCell>{format(new Date(transaction.timestamp), "dd MMM yyyy, HH:mm")}</TableCell>
+                      <TableCell>{format(transaction.timestamp, "dd MMM yyyy, HH:mm")}</TableCell> {/* Corrected format call */}
                       <TableCell>{mockOutlets.find(o => o.id === transaction.outletId)?.name || 'N/A'}</TableCell>
                       <TableCell>{mockKasirs.find(k => k.id === transaction.kasirId)?.name || 'N/A'}</TableCell>
                       <TableCell>
@@ -261,3 +286,6 @@ export default function ReportsPage() {
     </div>
   );
 }
+
+
+    
