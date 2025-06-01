@@ -1,43 +1,39 @@
 
 import { initializeApp, getApp, getApps } from 'firebase/app';
-// import { getAuth } from 'firebase/auth';
-// import { getFirestore } from 'firebase/firestore';
+import { getAnalytics, isSupported as isAnalyticsSupported } from "firebase/analytics";
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyDZbkWw_6lNxvzpYtVO1fjz8gfFh-ZOyhA", // Example, ensure this is from your .env or secure source if used
+  apiKey: "AIzaSyDZbkWw_6lNxvzpYtVO1fjz8gfFh-ZOyhA",
   authDomain: "poss-b0c1a.firebaseapp.com",
   projectId: "poss-b0c1a",
-  storageBucket: "poss-b0c1a.appspot.com",
+  storageBucket: "poss-b0c1a.firebasestorage.app", // User updated value
   messagingSenderId: "960224107625",
   appId: "1:960224107625:web:2962928ccdddf46c75d6f8",
   measurementId: "G-FW6EZS3BY4"
 };
 
-// Initialize Firebase (conditionally)
-let app;
-// if (typeof window !== 'undefined') { // Ensure Firebase only initializes on client-side for now
-//   if (getApps().length === 0) {
-//     app = initializeApp(firebaseConfig);
-//   } else {
-//     app = getApp();
-//   }
-// }
+// Initialize Firebase App
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// const auth = app ? getAuth(app) : null;
-// const db = app ? getFirestore(app) : null;
+// Initialize Firebase services
+const auth = getAuth(app);
+const db = getFirestore(app);
 
-// Mock auth and db if not initialized or for testing without Firebase
-const mockAuth = {
-  currentUser: null,
-  // Add other mock methods if needed by components
-};
+let analytics;
+if (typeof window !== 'undefined') {
+  isAnalyticsSupported().then((supported) => {
+    if (supported) {
+      analytics = getAnalytics(app);
+      console.log("Firebase Analytics initialized");
+    } else {
+      console.log("Firebase Analytics not supported in this environment.");
+    }
+  }).catch(err => {
+    console.error("Error checking Firebase Analytics support:", err);
+  });
+}
 
-const mockDb = {
-  // Add mock db methods if needed
-};
-
-const auth = mockAuth; // Use mockAuth
-const db = mockDb; // Use mockDb
-
-export { app, auth, db };
+export { app, auth, db, analytics };
