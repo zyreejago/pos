@@ -15,12 +15,14 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { User, Mail, Lock } from 'lucide-react';
+import { User as UserIconStandard, Mail, Lock } from 'lucide-react'; // Renamed User to avoid conflict
 import { useState } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from 'next/navigation';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase'; // Import db
+import { doc, setDoc, serverTimestamp } from "firebase/firestore"; // Import Firestore functions
+import type { User } from '@/types';
 
 
 const registerFormSchema = z.object({
@@ -54,15 +56,31 @@ export function RegisterForm() {
     setIsLoading(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
-      // Update user profile with merchant name as displayName
-      if (userCredential.user) {
-        await updateProfile(userCredential.user, {
+      const firebaseUser = userCredential.user;
+
+      if (firebaseUser) {
+        // Update user profile with merchant name as displayName
+        await updateProfile(firebaseUser, {
           displayName: values.merchantName,
         });
+
+        // Create user document in Firestore
+        const userRef = doc(db, "users", firebaseUser.uid);
+        const userData: User = {
+          id: firebaseUser.uid,
+          name: values.merchantName,
+          email: values.email,
+          role: 'admin', // Default role for self-registered merchant admin
+          status: 'pending_approval', // Default status
+          merchantId: firebaseUser.uid, // Use UID as merchantId for new merchant
+          createdAt: serverTimestamp(),
+        };
+        await setDoc(userRef, userData);
       }
+
       toast({
         title: "Registration Successful!",
-        description: "Your account has been created. You can now log in.",
+        description: "Your account has been created and is pending approval. You can now log in.",
       });
       router.push("/login");
     } catch (error: any) {
@@ -109,7 +127,7 @@ export function RegisterForm() {
               <FormItem>
                 <FormLabel className="text-foreground">Merchant Name / Your Name</FormLabel>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+                  <UserIconStandard className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
                   <FormControl>
                     <Input placeholder="Your Business or Full Name" {...field} className="pl-10" disabled={isLoading} />
                   </FormControl>

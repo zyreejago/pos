@@ -1,13 +1,15 @@
+
 export type UserRole = 'superadmin' | 'admin' | 'kasir';
 
 export interface User {
-  id: string;
-  name: string;
+  id: string; // Corresponds to Firebase Auth UID
+  name: string; // displayName
   email: string;
   role: UserRole;
   outlets?: string[]; // Outlet IDs kasir has access to
   status: 'active' | 'pending_approval' | 'inactive';
   merchantId?: string; // For kasir/admin, to associate with a merchant
+  createdAt?: any; // Firestore ServerTimestamp
 }
 
 export interface Outlet {
