@@ -60,27 +60,35 @@ const getCurrentUser = (): StoredUser | null => {
 
 export function OutletsTable() {
   const [outlets, setOutlets] = useState<Outlet[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // For fetching outlets
   const [editingOutlet, setEditingOutlet] = useState<Outlet | undefined>(undefined);
-  const [isFormOpen, setIsFormOpen] = useState(false); // To control dialog visibility directly
+  const [isFormOpen, setIsFormOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [outletToDelete, setOutletToDelete] = useState<Outlet | null>(null);
   const { toast } = useToast();
-  const currentUser = getCurrentUser();
+
+  const [componentCurrentUser, setComponentCurrentUser] = useState<StoredUser | null>(null);
+  const [userCheckCompleted, setUserCheckCompleted] = useState(false);
+
+  useEffect(() => {
+    // This effect runs only on the client, after hydration
+    const user = getCurrentUser();
+    setComponentCurrentUser(user);
+    setUserCheckCompleted(true);
+  }, []); // Empty dependency array ensures it runs once on mount
 
   const fetchOutlets = useCallback(async () => {
-    if (!currentUser || !currentUser.merchantId) {
-      // toast({ title: "Error", description: "Merchant information not found. Cannot load outlets.", variant: "destructive" });
+    if (!componentCurrentUser || !componentCurrentUser.merchantId) {
       setIsLoading(false);
-      setOutlets([]); // Clear outlets if no merchantId
+      setOutlets([]);
       return;
     }
     setIsLoading(true);
     try {
       const q = query(
-        collection(db, "outlets"), 
-        where("merchantId", "==", currentUser.merchantId),
-        orderBy("createdAt", "desc") // Optional: order by creation time
+        collection(db, "outlets"),
+        where("merchantId", "==", componentCurrentUser.merchantId),
+        orderBy("createdAt", "desc")
       );
       const querySnapshot = await getDocs(q);
       const fetchedOutlets: Outlet[] = [];
@@ -91,24 +99,30 @@ export function OutletsTable() {
     } catch (error) {
       console.error("Error fetching outlets: ", error);
       toast({ title: "Fetch Failed", description: "Could not fetch outlets data.", variant: "destructive" });
-      setOutlets([]); // Clear outlets on error
+      setOutlets([]);
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
-  }, [currentUser, toast]);
+  }, [componentCurrentUser, toast]);
 
   useEffect(() => {
-    fetchOutlets();
-  }, [fetchOutlets]);
+    if (userCheckCompleted && componentCurrentUser) {
+      fetchOutlets();
+    } else if (userCheckCompleted && !componentCurrentUser) {
+      setIsLoading(false);
+      setOutlets([]);
+    }
+  }, [userCheckCompleted, componentCurrentUser, fetchOutlets]);
 
   const handleSaveSuccess = () => {
-    fetchOutlets(); // Re-fetch outlets after save
+    fetchOutlets();
   };
 
   const openEditDialog = (outlet: Outlet) => {
     setEditingOutlet(outlet);
     setIsFormOpen(true);
   };
-  
+
   const openNewDialog = () => {
     setEditingOutlet(undefined);
     setIsFormOpen(true);
@@ -124,14 +138,12 @@ export function OutletsTable() {
       try {
         await deleteDoc(doc(db, "outlets", outletToDelete.id));
         toast({ title: "Outlet Deleted", description: `Outlet ${outletToDelete.name} has been deleted.`});
-        fetchOutlets(); // Re-fetch after delete
-         // Also remove from selected outlet if it was the one deleted
+        fetchOutlets();
         if (typeof window !== 'undefined') {
             const selectedOutletId = localStorage.getItem('selectedOutletId');
             if (selectedOutletId === outletToDelete.id) {
                 localStorage.removeItem('selectedOutletId');
                 localStorage.removeItem('selectedOutletName');
-                // Optionally redirect or notify user to select another outlet
             }
         }
       } catch (error) {
@@ -143,7 +155,17 @@ export function OutletsTable() {
     setOutletToDelete(null);
   };
 
-  if (!currentUser) {
+  if (!userCheckCompleted) {
+    // Initial render state (server and first client render before useEffect runs)
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Initializing...</p>
+      </div>
+    );
+  }
+
+  if (!componentCurrentUser) {
      return (
       <div className="flex flex-col items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
@@ -152,29 +174,47 @@ export function OutletsTable() {
       </div>
     );
   }
-  
-  if (!currentUser.merchantId) {
+
+  if (!componentCurrentUser.merchantId) {
     return (
-      <div className="p-4 text-center text-destructive-foreground bg-destructive/80 rounded-md">
-        Merchant information is missing. Please ensure you are logged in correctly or contact support.
-      </div>
+      <>
+        <div className="flex justify-end mb-4">
+           <Button onClick={openNewDialog} disabled={true}> {/* Disabled as no merchantId */}
+             <PlusCircle className="mr-2 h-4 w-4" /> Add Outlet
+           </Button>
+        </div>
+        <div className="p-4 text-center text-destructive-foreground bg-destructive/80 rounded-md">
+          Merchant information is missing. Please ensure you are logged in correctly or contact support.
+        </div>
+      </>
     );
   }
 
+  const addOutletButton = (
+    <Button onClick={openNewDialog} disabled={isLoading || !componentCurrentUser?.merchantId}>
+      <PlusCircle className="mr-2 h-4 w-4" /> Add Outlet
+    </Button>
+  );
 
-  return (
-    <>
-      <div className="flex justify-end mb-4">
-        <Button onClick={openNewDialog} disabled={isLoading || !currentUser?.merchantId}>
-          <PlusCircle className="mr-2 h-4 w-4" /> Add Outlet
-        </Button>
-      </div>
-      {isLoading ? (
+  if (isLoading) { // This isLoading is for the outlets fetch
+    return (
+      <>
+        <div className="flex justify-end mb-4">
+          {addOutletButton}
+        </div>
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="ml-2 text-muted-foreground">Loading outlets...</p>
         </div>
-      ) : (
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex justify-end mb-4">
+        {addOutletButton}
+      </div>
       <div className="rounded-lg border shadow-sm bg-card">
         <Table>
           <TableHeader>
@@ -225,7 +265,6 @@ export function OutletsTable() {
           </TableBody>
         </Table>
       </div>
-      )}
 
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <AlertDialogContent>
@@ -249,7 +288,7 @@ export function OutletsTable() {
         <OutletFormDialog
           outlet={editingOutlet}
           onSaveSuccess={handleSaveSuccess}
-          triggerButton={<div style={{display: 'none'}} />} 
+          triggerButton={<div style={{display: 'none'}} />}
         />
       )}
     </>
