@@ -3,7 +3,7 @@
 import { AppSidebar } from '@/components/layout/app-sidebar';
 import { AppHeader } from '@/components/layout/app-header';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
-import { Sheet, SheetContent } from "@/components/ui/sheet"; 
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"; 
 import { useSidebar } from '@/components/ui/sidebar'; 
 
 function MobileSheetProvider({ children }: { children: React.ReactNode }) {
@@ -11,6 +11,7 @@ function MobileSheetProvider({ children }: { children: React.ReactNode }) {
   return (
     <Sheet open={openMobile} onOpenChange={setOpenMobile}>
       <SheetContent side="left" className="p-0 w-[calc(var(--sidebar-width-icon)_+_14rem)] bg-sidebar text-sidebar-foreground border-r-0">
+        <SheetTitle className="sr-only">Main Navigation</SheetTitle>
         <AppSidebar />
       </SheetContent>
       {children}
