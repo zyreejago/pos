@@ -12,7 +12,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
+  // DialogTrigger, // No longer needed if always controlled externally for this context
 } from "@/components/ui/dialog";
 import {
   Form,
@@ -24,8 +24,8 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { Outlet as OutletType } from "@/types"; // Renamed to avoid conflict
-import { PlusCircle, Store, MapPin } from "lucide-react";
+import type { Outlet as OutletType } from "@/types";
+import { Store, MapPin } from "lucide-react"; // PlusCircle removed as trigger is external
 import { useState, useEffect } from "react";
 import { db, serverTimestamp } from '@/lib/firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
@@ -63,15 +63,20 @@ const getCurrentUser = (): StoredUser | null => {
 
 interface OutletFormDialogProps {
   outlet?: OutletType;
-  onSaveSuccess: () => void; // Callback to refresh table
-  triggerButton?: React.ReactNode;
+  onSaveSuccess: () => void;
+  isOpenProp: boolean; // Make this required if dialog is always controlled
+  onOpenChangeProp: (open: boolean) => void; // Make this required
 }
 
-export function OutletFormDialog({ outlet, onSaveSuccess, triggerButton }: OutletFormDialogProps) {
-  const [isOpen, setIsOpen] = useState(false);
+export function OutletFormDialog({ 
+    outlet, 
+    onSaveSuccess, 
+    isOpenProp,
+    onOpenChangeProp 
+}: OutletFormDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
-  const currentUser = getCurrentUser();
+  const currentUser = getCurrentUser(); // Use this for merchantId
 
   const form = useForm<OutletFormValues>({
     resolver: zodResolver(outletFormSchema),
@@ -82,10 +87,12 @@ export function OutletFormDialog({ outlet, onSaveSuccess, triggerButton }: Outle
   });
   
   useEffect(() => {
-    if (isOpen) {
+    console.log("[OutletFormDialog] Effect triggered. isOpenProp:", isOpenProp, "Outlet:", outlet?.name);
+    if (isOpenProp) {
+      console.log("[OutletFormDialog] isOpenProp is true, resetting form with outlet:", outlet ? outlet.name : "new outlet");
       form.reset(outlet || { name: "", address: "" });
     }
-  }, [isOpen, outlet, form]);
+  }, [isOpenProp, outlet, form]);
 
 
   const onSubmit = async (data: OutletFormValues) => {
@@ -95,16 +102,15 @@ export function OutletFormDialog({ outlet, onSaveSuccess, triggerButton }: Outle
       return;
     }
     setIsLoading(true);
+    console.log("[OutletFormDialog] Submitting form with data:", data);
     try {
-      if (outlet) { // Editing existing outlet
+      if (outlet) {
+        console.log("[OutletFormDialog] Updating existing outlet:", outlet.id);
         const outletRef = doc(db, "outlets", outlet.id);
-        await updateDoc(outletRef, {
-          ...data,
-          // merchantId: currentUser.merchantId, // merchantId should not change on edit
-          // updatedAt: serverTimestamp(), // Add if you have an updatedAt field
-        });
+        await updateDoc(outletRef, { ...data });
         toast({ title: "Outlet Updated", description: `Outlet ${data.name} has been updated.` });
-      } else { // Adding new outlet
+      } else {
+        console.log("[OutletFormDialog] Adding new outlet for merchantId:", currentUser.merchantId);
         await addDoc(collection(db, "outlets"), {
           ...data,
           merchantId: currentUser.merchantId,
@@ -112,21 +118,25 @@ export function OutletFormDialog({ outlet, onSaveSuccess, triggerButton }: Outle
         });
         toast({ title: "Outlet Added", description: `Outlet ${data.name} has been added.` });
       }
-      onSaveSuccess(); // Call callback to refresh parent table
-      setIsOpen(false);
-      form.reset(); 
+      onSaveSuccess();
+      onOpenChangeProp(false); // Signal to parent to close
     } catch (error) {
-      console.error("Error saving outlet: ", error);
+      console.error("[OutletFormDialog] Error saving outlet: ", error);
       toast({ title: "Save Failed", description: "Could not save outlet data. Please try again.", variant: "destructive" });
     }
     setIsLoading(false);
   };
 
+  console.log("[OutletFormDialog] Rendering. isOpenProp:", isOpenProp);
+
+  // If not open, don't render the dialog structure at all to be safe,
+  // though <Dialog open={false}> should just hide it.
+  if (!isOpenProp) {
+    return null;
+  }
+
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger asChild>
-        {triggerButton ? triggerButton : <Button><PlusCircle className="mr-2 h-4 w-4" /> Add Outlet</Button>}
-      </DialogTrigger>
+    <Dialog open={isOpenProp} onOpenChange={onOpenChangeProp}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle className="font-headline text-2xl">{outlet ? "Edit Outlet" : "Add New Outlet"}</DialogTitle>
@@ -169,8 +179,8 @@ export function OutletFormDialog({ outlet, onSaveSuccess, triggerButton }: Outle
               )}
             />
             <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={() => setIsOpen(false)} disabled={isLoading}>Cancel</Button>
-              <Button type="submit" disabled={isLoading || !currentUser}>
+              <Button type="button" variant="outline" onClick={() => onOpenChangeProp(false)} disabled={isLoading}>Cancel</Button>
+              <Button type="submit" disabled={isLoading || !currentUser?.merchantId}>
                 {isLoading ? (outlet ? "Saving..." : "Adding...") : (outlet ? "Save Changes" : "Add Outlet")}
               </Button>
             </DialogFooter>
