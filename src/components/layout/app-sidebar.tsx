@@ -15,6 +15,7 @@ import {
   ClipboardList,
   UserCog,
   ShieldCheck,
+  LifeBuoy, // Added LifeBuoy here
 } from 'lucide-react';
 import {
   Sidebar,
