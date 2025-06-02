@@ -83,11 +83,11 @@ export function KasirTable() {
     if (!currentUser || !currentUser.merchantId) {
       setKasirs([]);
       setAllOutlets([]);
-      setIsLoading(false); // Stop general loading if no user/merchantId
+      setIsLoading(false); 
       return;
     }
     console.log(`[KasirTable] Fetching kasirs and outlets for merchant: ${currentUser.merchantId}`);
-    setIsLoading(true); // Indicate data fetching is in progress
+    setIsLoading(true); 
     try {
       const merchantId = currentUser.merchantId;
 
@@ -119,17 +119,17 @@ export function KasirTable() {
         desc = "Permission denied fetching kasir/outlet data. Check the admin user's Firestore document (role & merchantId) and Firestore Security Rules for read operations on 'users' and 'outlets' collections.";
       }
       toast({ title: "Data Fetch Failed", description: desc, variant: "destructive", duration: 9000 });
-      setKasirs([]);
-      setAllOutlets([]);
+      // DO NOT CLEAR kasirs or allOutlets here if it's a refresh failure.
+      // The user has been notified by the toast. Existing displayed data will persist.
     }
-    setIsLoading(false); // Data fetching finished (success or fail)
+    setIsLoading(false); 
   }, [currentUser, toast]);
 
   useEffect(() => {
     if (isClient && currentUser && currentUser.merchantId) {
       fetchKasirsAndOutlets();
     } else if (isClient && (!currentUser || !currentUser.merchantId)) {
-      setIsLoading(false); // Ensure loading stops if no user/merchantId
+      setIsLoading(false); 
     }
   }, [isClient, currentUser, fetchKasirsAndOutlets]);
 
@@ -144,10 +144,9 @@ export function KasirTable() {
     }
     console.log("[KasirTable] Admin's Merchant ID for new/updated kasir:", currentUser.merchantId);
 
-    setIsLoading(true); // Loading for the save operation
+    setIsLoading(true); 
     try {
       if (kasirIdToUpdate) {
-        // Editing existing kasir
         const kasirRef = doc(db, "users", kasirIdToUpdate);
         const updateData: Partial<User> = {
           name: data.name,
@@ -161,7 +160,6 @@ export function KasirTable() {
         await updateDoc(kasirRef, updateData);
         toast({ title: "Kasir Updated", description: `Kasir ${data.name} has been updated.` });
       } else {
-        // Adding new kasir
         if (!data.password) {
           toast({ title: "Error: Password Required", description: "Password is required for new kasir.", variant: "destructive" });
           setIsLoading(false);
@@ -230,16 +228,15 @@ export function KasirTable() {
       setIsFormOpen(false);
       setEditingKasir(undefined);
       
-      // Add a small delay before refetching data
       setTimeout(() => {
-        fetchKasirsAndOutlets(); // This will set its own loading states
-      }, 500); // 500ms delay
+        fetchKasirsAndOutlets();
+      }, 500); 
 
     } catch (error: any) { 
       console.error("[KasirTable] Unexpected error in handleSaveKasir: ", error);
       toast({ title: "Save Kasir Failed (Unexpected)", description: `An unexpected error occurred: ${error.message || error.toString()}`, variant: "destructive", duration: 9000 });
     } finally {
-      setIsLoading(false); // Mark the save operation as complete
+      setIsLoading(false); 
     }
   };
 
@@ -270,7 +267,6 @@ export function KasirTable() {
         await deleteDoc(doc(db, "users", kasirToDelete.id));
         toast({ title: "Kasir Data Deleted", description: `Kasir ${kasirToDelete.name}'s data has been removed from Firestore. Their authentication account may still exist.`, variant: "default" });
         
-        // Add a small delay before refetching data
         setTimeout(() => {
           fetchKasirsAndOutlets();
         }, 500);
@@ -461,3 +457,4 @@ export function KasirTable() {
     </>
   );
 }
+
