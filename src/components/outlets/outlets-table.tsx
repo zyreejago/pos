@@ -58,7 +58,7 @@ const getCurrentUser = (): StoredUser | null => {
   return null;
 };
 
-const OUTLETS_CACHE_KEY = 'outletsCacheKey'; // Key for localStorage communication
+const OUTLETS_CACHE_KEY = 'outletsCacheKey'; 
 
 export function OutletsTable() {
   const [outlets, setOutlets] = useState<Outlet[]>([]);
@@ -73,21 +73,17 @@ export function OutletsTable() {
   const [userCheckCompleted, setUserCheckCompleted] = useState(false);
 
   useEffect(() => {
-    console.log('[OutletsTable] Initializing, attempting to get current user.');
     const user = getCurrentUser();
     setComponentCurrentUser(user);
     setUserCheckCompleted(true);
-    console.log('[OutletsTable] User check completed. Current user:', user);
   }, []);
 
   const fetchOutlets = useCallback(async () => {
     if (!componentCurrentUser || !componentCurrentUser.merchantId) {
-      console.log('[OutletsTable] fetchOutlets: Pre-conditions not met (no currentUser or merchantId). Bailing.', componentCurrentUser);
       setIsLoading(false);
       setOutlets([]);
       return;
     }
-    console.log(`[OutletsTable] fetchOutlets: Fetching for merchantId: ${componentCurrentUser.merchantId}. Setting isLoading to true.`);
     setIsLoading(true);
     try {
       const q = query(
@@ -100,31 +96,29 @@ export function OutletsTable() {
       querySnapshot.forEach((doc) => {
         fetchedOutlets.push({ id: doc.id, ...doc.data() } as Outlet);
       });
-      console.log('[OutletsTable] fetchOutlets: Fetched outlets:', fetchedOutlets);
       setOutlets(fetchedOutlets);
-    } catch (error) {
+    } catch (error: any) {
       console.error("[OutletsTable] Error fetching outlets: ", error);
-      toast({ title: "Fetch Failed", description: "Could not fetch outlets data.", variant: "destructive" });
+      let desc = `Could not fetch outlets data: ${error.message}`;
+      if (error.code === 'permission-denied') {
+        desc = "Permission denied fetching outlets. Ensure admin's Firestore doc has correct 'role' & 'merchantId', and check Firestore rules.";
+      }
+      toast({ title: "Fetch Failed", description: desc, variant: "destructive", duration: 9000 });
       setOutlets([]);
     } finally {
-      console.log('[OutletsTable] fetchOutlets: Setting isLoading to false in finally block.');
       setIsLoading(false);
     }
   }, [componentCurrentUser, toast]);
 
   useEffect(() => {
-    console.log('[OutletsTable] Outlets fetch useEffect triggered. userCheckCompleted:', userCheckCompleted, 'componentCurrentUser:', componentCurrentUser);
     if (userCheckCompleted && componentCurrentUser) {
       if (componentCurrentUser.merchantId) {
-         console.log('[OutletsTable] User is loaded with merchantId. Calling fetchOutlets.');
         fetchOutlets();
       } else {
-        console.log('[OutletsTable] User loaded, but no merchantId. Not fetching outlets.');
         setIsLoading(false);
         setOutlets([]);
       }
     } else if (userCheckCompleted && !componentCurrentUser) {
-      console.log('[OutletsTable] User check completed, but no current user. Not fetching outlets.');
       setIsLoading(false);
       setOutlets([]);
     }
@@ -132,37 +126,30 @@ export function OutletsTable() {
 
 
   useEffect(() => {
-    console.log("[OutletsTable] isFormOpen state changed to:", isFormOpen);
   }, [isFormOpen]);
 
   const signalOutletListChange = () => {
     const newCacheKeyValue = Date.now().toString();
     localStorage.setItem(OUTLETS_CACHE_KEY, newCacheKeyValue);
-    // Manually dispatch a storage event so the AppHeader in the current tab also picks it up
     window.dispatchEvent(new StorageEvent('storage', {
       key: OUTLETS_CACHE_KEY,
       newValue: newCacheKeyValue,
       storageArea: localStorage,
     }));
-    console.log(`[OutletsTable] Signaled outlet list change with cache key: ${newCacheKeyValue}`);
   };
 
   const handleSaveSuccess = () => {
-    console.log("[OutletsTable] handleSaveSuccess called.");
-    fetchOutlets(); // Re-fetch for this table's view
-    signalOutletListChange(); // Signal AppHeader to update its outlets list
-    setIsFormOpen(false); // Close the dialog
+    fetchOutlets(); 
+    signalOutletListChange(); 
+    setIsFormOpen(false); 
   };
 
   const openNewDialog = () => {
-    console.log("[OutletsTable] openNewDialog called.");
     setEditingOutlet(undefined);
     setIsFormOpen(true);
-    console.log("[OutletsTable] isFormOpen set to true by openNewDialog.");
   };
 
   const openEditDialog = (outlet: Outlet) => {
-    console.log("[OutletsTable] openEditDialog called for outlet:", outlet.name);
     setEditingOutlet(outlet);
     setIsFormOpen(true);
   };
@@ -183,20 +170,23 @@ export function OutletsTable() {
             if (selectedOutletId === outletToDelete.id) {
                 localStorage.removeItem('selectedOutletId');
                 localStorage.removeItem('selectedOutletName');
-                // Manually dispatch event for selectedOutletId change for AppHeader
                 window.dispatchEvent(new StorageEvent('storage', {
                   key: 'selectedOutletId',
-                  newValue: null, // Indicate it's removed
+                  newValue: null, 
                   storageArea: localStorage,
                 }));
             }
         }
-        fetchOutlets(); // Re-fetch for this table's view
-        signalOutletListChange(); // Signal AppHeader to update its outlets list
+        fetchOutlets(); 
+        signalOutletListChange();
 
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error deleting outlet: ", error);
-        toast({ title: "Delete Failed", description: "Could not delete outlet. Please try again.", variant: "destructive" });
+        let desc = `Could not delete outlet: ${error.message}`;
+        if (error.code === 'permission-denied') {
+            desc = "Permission denied deleting outlet. Check Firestore rules.";
+        }
+        toast({ title: "Delete Failed", description: desc, variant: "destructive", duration: 7000 });
       }
     }
     setShowDeleteConfirm(false);
@@ -246,8 +236,6 @@ export function OutletsTable() {
     );
   }
   
-  console.log(`[OutletsTable] Rendering. isFormOpen: ${isFormOpen}, isLoading: ${isLoading}, canAddOutlet: ${canAddOutlet}`);
-
   return (
     <>
       <div className="flex justify-end mb-4">
@@ -339,3 +327,6 @@ export function OutletsTable() {
     </>
   );
 }
+
+
+    

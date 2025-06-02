@@ -62,7 +62,7 @@ const getCurrentUser = (): StoredUser | null => {
   return null;
 };
 
-const OUTLETS_CACHE_KEY = 'outletsCacheKey'; // Key for localStorage communication
+const OUTLETS_CACHE_KEY = 'outletsCacheKey'; 
 
 export function AppHeader() {
   const { isMobile } = useSidebar();
@@ -70,12 +70,11 @@ export function AppHeader() {
   const [selectedOutletId, setSelectedOutletId] = useState<string | null>(null);
   const [availableOutlets, setAvailableOutlets] = useState<Outlet[]>([]);
   const [isLoadingOutlets, setIsLoadingOutlets] = useState(false);
-  const [outletsCacheKeyState, setOutletsCacheKeyState] = useState<string | null>(null); // To react to localStorage changes
+  const [outletsCacheKeyState, setOutletsCacheKeyState] = useState<string | null>(null); 
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
 
-  // Effect for initializing from localStorage and setting up storage listener
   useEffect(() => {
     const user = getCurrentUser();
     setCurrentUser(user);
@@ -87,12 +86,13 @@ export function AppHeader() {
 
     const handleStorageChange = (event: StorageEvent) => {
       if (event.key === OUTLETS_CACHE_KEY && event.storageArea === localStorage) {
-        console.log('[AppHeader] Storage event for OUTLETS_CACHE_KEY detected. New value:', event.newValue);
         setOutletsCacheKeyState(event.newValue);
       }
       if (event.key === 'selectedOutletId' && event.storageArea === localStorage) {
-        console.log('[AppHeader] Storage event for selectedOutletId detected. New value:', event.newValue);
         setSelectedOutletId(event.newValue);
+      }
+       if (event.key === 'mockUser' && event.storageArea === localStorage) {
+        setCurrentUser(event.newValue ? JSON.parse(event.newValue) : null);
       }
     };
 
@@ -100,7 +100,7 @@ export function AppHeader() {
     return () => {
       window.removeEventListener('storage', handleStorageChange);
     };
-  }, []); // Run once on mount to initialize and set up listener
+  }, []); 
 
   const fetchOutletsForDropdown = useCallback(async () => {
     if (!currentUser || !currentUser.merchantId || currentUser.role === 'superadmin' || currentUser.status !== 'active') {
@@ -109,7 +109,6 @@ export function AppHeader() {
       return;
     }
     setIsLoadingOutlets(true);
-    console.log(`[AppHeader] Fetching outlets for dropdown. Merchant ID: ${currentUser.merchantId}`);
     try {
       const q = query(
         collection(db, "outlets"),
@@ -122,38 +121,31 @@ export function AppHeader() {
         fetchedOutlets.push({ id: doc.id, ...doc.data() } as Outlet);
       });
       setAvailableOutlets(fetchedOutlets);
-      console.log('[AppHeader] Fetched outlets for dropdown:', fetchedOutlets.map(o => o.name));
 
-      // Validate selectedOutletId
-      const currentSelectedOutletId = localStorage.getItem('selectedOutletId'); // Read fresh from localStorage
+      const currentSelectedOutletId = localStorage.getItem('selectedOutletId'); 
       if (currentSelectedOutletId && !fetchedOutlets.some(o => o.id === currentSelectedOutletId)) {
-        console.log(`[AppHeader] Selected outlet ${currentSelectedOutletId} no longer valid or found. Clearing selection.`);
         localStorage.removeItem('selectedOutletId');
         localStorage.removeItem('selectedOutletName');
-        setSelectedOutletId(null); // Update state to trigger re-render and clear dropdown selection
-      } else if (!currentSelectedOutletId && fetchedOutlets.length > 0 && pathname !== '/select-outlet') {
-        // If no outlet is selected but outlets are available, and not on selection page,
-        // it might imply user needs to select one, or we could auto-select first.
-        // For now, AppLayout handles redirection to /select-outlet if needed.
+        setSelectedOutletId(null); 
       }
-
-
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching outlets for header: ", error);
-      toast({ title: "Error", description: "Could not load outlets for selection.", variant: "destructive" });
+      let desc = `Could not load outlets for selection: ${error.message}`;
+      if (error.code === 'permission-denied') {
+        desc = "Permission denied fetching outlets for header. Ensure admin's Firestore doc has correct 'role' & 'merchantId', and check Firestore rules.";
+      }
+      toast({ title: "Error Loading Outlets", description: desc, variant: "destructive", duration: 9000 });
     }
     setIsLoadingOutlets(false);
-  }, [currentUser, toast]); // Removed selectedOutletId from here, effect below handles it
+  }, [currentUser, toast]); 
 
-  // Effect for fetching outlets when relevant state changes
   useEffect(() => {
     if (currentUser) {
-      console.log('[AppHeader] Effect to fetch outlets triggered. User:', currentUser?.email, 'SelectedOutletId:', selectedOutletId, 'CacheKey:', outletsCacheKeyState, 'Pathname:', pathname);
       fetchOutletsForDropdown();
     } else {
-      setAvailableOutlets([]); // Clear outlets if no user
+      setAvailableOutlets([]); 
     }
-  }, [currentUser, selectedOutletId, outletsCacheKeyState, fetchOutletsForDropdown, pathname]); // Added pathname to re-fetch on navigation if needed
+  }, [currentUser, selectedOutletId, outletsCacheKeyState, fetchOutletsForDropdown, pathname]); 
 
 
   const handleLogout = async () => {
@@ -163,7 +155,7 @@ export function AppHeader() {
         localStorage.removeItem('mockUser');
         localStorage.removeItem('selectedOutletId');
         localStorage.removeItem('selectedOutletName');
-        localStorage.removeItem(OUTLETS_CACHE_KEY); // Clear cache key on logout
+        localStorage.removeItem(OUTLETS_CACHE_KEY); 
       }
       setCurrentUser(null);
       setSelectedOutletId(null);
@@ -172,7 +164,8 @@ export function AppHeader() {
         title: "Logged Out",
         description: "You have been successfully logged out.",
       });
-      router.push('/login');
+      // Full page redirect to ensure all states are cleared and AppLayout re-evaluates auth.
+      window.location.href = '/login';
     } catch (error) {
         console.error("Error signing out: ", error);
         toast({
@@ -188,15 +181,12 @@ export function AppHeader() {
     if (selectedOutletDetails && typeof window !== 'undefined') {
       localStorage.setItem('selectedOutletId', selectedOutletDetails.id);
       localStorage.setItem('selectedOutletName', selectedOutletDetails.name);
-      setSelectedOutletId(selectedOutletDetails.id); // Directly update state
+      setSelectedOutletId(selectedOutletDetails.id); 
 
       toast({
         title: "Outlet Changed",
         description: `Switched to ${selectedOutletDetails.name}. Refreshing page...`,
       });
-      // Force a reload or navigate to ensure all components depending on selected outlet update correctly.
-      // Navigating to dashboard is a common pattern.
-      // Using window.location.href to ensure a full refresh which re-initializes states from localStorage.
       window.location.href = '/dashboard'; 
     }
   };
@@ -271,7 +261,7 @@ export function AppHeader() {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                {currentUser.role !== 'superadmin' && (
+                {currentUser.role !== 'superadmin' && currentUser.status === 'active' && (
                   <DropdownMenuItem asChild>
                     <Link href="/select-outlet" className="flex items-center gap-2 cursor-pointer">
                       <Building className="h-4 w-4" />
@@ -313,3 +303,6 @@ export function AppHeader() {
     </header>
   );
 }
+
+
+    
