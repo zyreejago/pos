@@ -41,7 +41,7 @@ interface StoredUser {
   merchantId?: string;
 }
 
-const getCurrentUser = (): StoredUser | null => {
+const getCurrentUserFromStorage = (): StoredUser | null => { // Renamed to avoid conflict
   if (typeof window !== 'undefined') {
     const storedUserStr = localStorage.getItem('mockUser');
     if (storedUserStr) {
@@ -69,11 +69,23 @@ export default function ReportsPage() {
   
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const { toast } = useToast();
-  const currentUser = getCurrentUser();
+  
+  const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    // This effect runs once on the client after hydration
+    setIsClient(true);
+    setCurrentUser(getCurrentUserFromStorage());
+  }, []);
 
   const fetchReportData = useCallback(async () => {
-    if (!currentUser || !currentUser.merchantId) {
-      toast({ title: "Error", description: "Merchant information not found.", variant: "destructive" });
+    if (!isClient || !currentUser || !currentUser.merchantId) {
+      // Don't toast here if it's just an initial state before currentUser is loaded.
+      // Toasting can cause issues if called too early or too often.
+      if (isClient && currentUser && !currentUser.merchantId) {
+         toast({ title: "Error", description: "Merchant information not found.", variant: "destructive" });
+      }
       setIsLoading(false);
       return;
     }
@@ -101,33 +113,45 @@ export default function ReportsPage() {
         return { 
           id: doc.id, 
           ...data,
-          // Ensure timestamp is a JS Date object for consistency if it's a Firestore Timestamp
           timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(data.timestamp) 
         } as Transaction;
       });
       setAllTransactions(fetchedTransactions);
-      setFilteredTransactions(fetchedTransactions); // Initialize filtered with all
+      setFilteredTransactions(fetchedTransactions); 
 
     } catch (error) {
       console.error("Error fetching report data:", error);
       toast({ title: "Fetch Failed", description: "Could not load report data.", variant: "destructive" });
     }
     setIsLoading(false);
-  }, [currentUser, toast]);
+  }, [isClient, currentUser, toast]); // Dependencies for fetchReportData callback
 
   useEffect(() => {
-    fetchReportData();
-    // Initialize dateRange on the client side after initial data might be fetched or if running fully client-side
-    setDateRange({
-      from: subDays(new Date(), 7),
-      to: new Date(),
-    });
-  }, [fetchReportData]);
+    // This effect handles data fetching and initial date range setting
+    // It runs when isClient or currentUser changes.
+    if (isClient && currentUser) {
+      fetchReportData();
+      // Initialize dateRange only once after currentUser is available and if dateRange is not already set
+      if (!dateRange) { 
+        setDateRange({
+          from: subDays(new Date(), 7),
+          to: new Date(),
+        });
+      }
+    } else if (isClient && !currentUser) {
+        // If client is ready but no user (e.g. logged out but somehow on this page)
+        setIsLoading(false); // Ensure loading state is false
+        setAllTransactions([]);
+        setFilteredTransactions([]);
+        setAllOutlets([]);
+        setAllKasirs([]);
+    }
+  }, [isClient, currentUser, fetchReportData, dateRange]); // dateRange is included to prevent re-setting if it changes by user action
 
 
   const applyFilters = () => {
     if (isLoading) return;
-    let transactions = [...allTransactions]; // Work with a copy
+    let transactions = [...allTransactions]; 
 
     if (dateRange?.from) {
         transactions = transactions.filter(t => {
@@ -138,7 +162,6 @@ export default function ReportsPage() {
     if (dateRange?.to) {
         transactions = transactions.filter(t => {
             const transactionDate = t.timestamp instanceof Timestamp ? t.timestamp.toDate() : new Date(t.timestamp);
-            // Adjust 'to' date to include the whole day
             const toDateEnd = new Date(dateRange.to!);
             toDateEnd.setHours(23, 59, 59, 999);
             return transactionDate <= toDateEnd;
@@ -157,7 +180,7 @@ export default function ReportsPage() {
   };
   
   const resetFilters = () => {
-    if (isLoading) return; // Should not be strictly necessary if button disabled while loading
+    if (isLoading) return; 
     setDateRange({ from: subDays(new Date(), 7), to: new Date() });
     setSelectedOutlet("all");
     setSelectedKasir("all");
@@ -198,20 +221,37 @@ export default function ReportsPage() {
     toast({ title: "Export Successful", description: "Sales report has been downloaded as CSV.", variant: "default" });
   };
 
-  if (isLoading && !allTransactions.length) { // Show loader only on initial full load
+  if (!isClient || (isLoading && !currentUser)) { 
     return (
       <div className="flex flex-col gap-6 items-center justify-center min-h-[calc(100vh-theme(spacing.28))]">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <p className="text-muted-foreground text-lg">Loading report data...</p>
+        <p className="text-muted-foreground text-lg">{!isClient ? "Initializing..." : "Loading user data..."}</p>
       </div>
     );
   }
+  
+  if (isClient && !currentUser) {
+     return (
+      <div className="flex flex-col gap-6 items-center justify-center min-h-[calc(100vh-theme(spacing.28))]">
+        <p className="text-muted-foreground text-lg">User not authenticated. Please log in.</p>
+      </div>
+    );
+  }
+  
+  if (isClient && currentUser && !currentUser.merchantId) {
+     return (
+      <div className="flex flex-col gap-6 items-center justify-center min-h-[calc(100vh-theme(spacing.28))]">
+        <p className="text-muted-foreground text-lg">Merchant information not found for your account.</p>
+      </div>
+    );
+  }
+
 
   return (
     <div className="flex flex-col gap-6">
        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h1 className="text-3xl font-headline font-bold tracking-tight text-foreground">Sales Reports</h1>
-        <Button onClick={exportToExcel} variant="outline" disabled={isLoading}>
+        <Button onClick={exportToExcel} variant="outline" disabled={isLoading || filteredTransactions.length === 0}>
           <Download className="mr-2 h-4 w-4" /> Export to Excel
         </Button>
       </div>
@@ -230,7 +270,7 @@ export default function ReportsPage() {
                   id="date-range"
                   variant={"outline"}
                   className="w-full justify-start text-left font-normal"
-                  disabled={!dateRange || isLoading} 
+                  disabled={isLoading} 
                 >
                   <CalendarIcon className="mr-2 h-4 w-4" />
                   {dateRange?.from ? (
@@ -301,7 +341,6 @@ export default function ReportsPage() {
                 <SelectItem value="all">All Methods</SelectItem>
                 <SelectItem value="cash">Cash</SelectItem>
                 <SelectItem value="qris">QRIS</SelectItem>
-                {/* Add other payment methods as needed */}
               </SelectContent>
             </Select>
           </div>
@@ -319,7 +358,7 @@ export default function ReportsPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle className="font-headline text-xl">Report Results</CardTitle>
-          <CardDescription>Showing {filteredTransactions.length} transactions based on your filters.</CardDescription>
+          <CardDescription>Showing {filteredTransactions.length} transactions based on your filters. Total: {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(filteredTransactions.reduce((sum, t) => sum + t.totalAmount, 0))}</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="rounded-md border">
@@ -334,7 +373,15 @@ export default function ReportsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredTransactions.length > 0 ? (
+                {isLoading && filteredTransactions.length === 0 ? ( // Show loading indicator in table body only if filters are applied and still loading
+                   <TableRow>
+                    <TableCell colSpan={5} className="h-24 text-center">
+                      <div className="flex justify-center items-center">
+                        <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading transactions...
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : filteredTransactions.length > 0 ? (
                   filteredTransactions.map((transaction) => {
                     const transactionDate = transaction.timestamp instanceof Timestamp ? transaction.timestamp.toDate() : new Date(transaction.timestamp);
                     return (
@@ -356,7 +403,7 @@ export default function ReportsPage() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={5} className="h-24 text-center">
-                      {isLoading ? "Loading transactions..." : "No transactions match your current filters."}
+                      No transactions match your current filters.
                     </TableCell>
                   </TableRow>
                 )}
@@ -368,4 +415,4 @@ export default function ReportsPage() {
     </div>
   );
 }
-
+    
