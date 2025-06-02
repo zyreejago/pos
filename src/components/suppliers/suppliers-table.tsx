@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from 'react'; // Added useCallback
+import { useState, useEffect, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { MoreHorizontal, Edit3, Trash2, PlusCircle, Loader2 } from "lucide-react"; // Added Loader2
+import { MoreHorizontal, Edit3, Trash2, PlusCircle, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,8 +32,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { db } from '@/lib/firebase'; // Import db
-import { collection, query, where, getDocs, doc, deleteDoc, orderBy } from 'firebase/firestore'; // Import Firestore functions
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, doc, deleteDoc, orderBy } from 'firebase/firestore';
 
 interface StoredUser {
   id: string;
@@ -43,7 +43,7 @@ interface StoredUser {
   merchantId?: string;
 }
 
-const getCurrentUser = (): StoredUser | null => {
+const getCurrentUserFromStorage = (): StoredUser | null => {
   if (typeof window !== 'undefined') {
     const storedUserStr = localStorage.getItem('mockUser');
     if (storedUserStr) {
@@ -60,28 +60,33 @@ const getCurrentUser = (): StoredUser | null => {
 
 export function SuppliersTable() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // Represents loading of suppliers
   const [editingSupplier, setEditingSupplier] = useState<Supplier | undefined>(undefined);
-  const [isFormOpen, setIsFormOpen] = useState(false); 
+  const [isFormOpen, setIsFormOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [supplierToDelete, setSupplierToDelete] = useState<Supplier | null>(null);
   const { toast } = useToast();
-  const currentUser = getCurrentUser();
+
+  const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+    setCurrentUser(getCurrentUserFromStorage());
+  }, []);
 
   const fetchSuppliers = useCallback(async () => {
     if (!currentUser || !currentUser.merchantId) {
       setIsLoading(false);
       setSuppliers([]);
-      // Consider a toast or a message if user is not properly authenticated or lacks merchantId
-      // toast({ title: "Error", description: "Cannot load suppliers. User or merchant data missing.", variant: "destructive" });
       return;
     }
     setIsLoading(true);
     try {
       const q = query(
-        collection(db, "suppliers"), 
+        collection(db, "suppliers"),
         where("merchantId", "==", currentUser.merchantId),
-        orderBy("createdAt", "desc") 
+        orderBy("createdAt", "desc")
       );
       const querySnapshot = await getDocs(q);
       const fetchedSuppliers: Supplier[] = [];
@@ -98,18 +103,23 @@ export function SuppliersTable() {
   }, [currentUser, toast]);
 
   useEffect(() => {
-    fetchSuppliers();
-  }, [fetchSuppliers]);
+    if (isClient && currentUser && currentUser.merchantId) {
+      fetchSuppliers();
+    } else if (isClient && (!currentUser || !currentUser.merchantId)) {
+      // If on client and no user or no merchantId, stop loading and show appropriate message.
+      setIsLoading(false);
+    }
+  }, [isClient, currentUser, fetchSuppliers]);
 
   const handleSaveSuccess = () => {
-    fetchSuppliers(); // Re-fetch suppliers after save
+    fetchSuppliers();
   };
 
   const openEditDialog = (supplier: Supplier) => {
     setEditingSupplier(supplier);
     setIsFormOpen(true);
   };
-  
+
   const openNewDialog = () => {
     setEditingSupplier(undefined);
     setIsFormOpen(true);
@@ -124,8 +134,8 @@ export function SuppliersTable() {
     if (supplierToDelete) {
       try {
         await deleteDoc(doc(db, "suppliers", supplierToDelete.id));
-        toast({ title: "Supplier Deleted", description: `Supplier ${supplierToDelete.name} has been deleted.`});
-        fetchSuppliers(); // Re-fetch after delete
+        toast({ title: "Supplier Deleted", description: `Supplier ${supplierToDelete.name} has been deleted.` });
+        fetchSuppliers();
       } catch (error) {
         console.error("Error deleting supplier: ", error);
         toast({ title: "Delete Failed", description: "Could not delete supplier. Please try again.", variant: "destructive" });
@@ -135,30 +145,64 @@ export function SuppliersTable() {
     setSupplierToDelete(null);
   };
 
-  if (!currentUser) {
-     return (
-      <div className="flex flex-col items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-        <p className="text-muted-foreground">Loading user data...</p>
-      </div>
-    );
-  }
-  
-  if (isLoading) {
+  // Render a consistent initial loading state for SSR and client's first paint
+  if (!isClient) {
     return (
       <div className="flex flex-col items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-        <p className="text-muted-foreground">Loading suppliers...</p>
+        <p className="text-muted-foreground">Initializing...</p>
       </div>
     );
   }
 
+  // After client has mounted, proceed with conditional rendering based on currentUser and isLoading
+  if (!currentUser) {
+    return (
+      <>
+        <div className="flex justify-end mb-4">
+          <Button disabled={true}><PlusCircle className="mr-2 h-4 w-4" /> Add Supplier</Button>
+        </div>
+        <div className="flex flex-col items-center justify-center h-64">
+          <p className="text-muted-foreground">User data not available. Please log in.</p>
+        </div>
+      </>
+    );
+  }
+
+  if (!currentUser.merchantId) {
+    return (
+      <>
+        <div className="flex justify-end mb-4">
+          <Button disabled={true}><PlusCircle className="mr-2 h-4 w-4" /> Add Supplier</Button>
+        </div>
+        <div className="p-4 text-center text-destructive-foreground bg-destructive/80 rounded-md">
+          Merchant information is missing for your account. Cannot manage suppliers.
+        </div>
+      </>
+    );
+  }
+  
+  if (isLoading) { // This isLoading now specifically refers to suppliers loading
+    return (
+      <>
+        <div className="flex justify-end mb-4">
+          <Button onClick={openNewDialog} disabled={!currentUser?.merchantId || isLoading}>
+            <PlusCircle className="mr-2 h-4 w-4" /> Add Supplier
+          </Button>
+        </div>
+        <div className="flex flex-col items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+          <p className="text-muted-foreground">Loading suppliers...</p>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
       <div className="flex justify-end mb-4">
         <Button onClick={openNewDialog} disabled={!currentUser?.merchantId}>
-            <PlusCircle className="mr-2 h-4 w-4" /> Add Supplier
+          <PlusCircle className="mr-2 h-4 w-4" /> Add Supplier
         </Button>
       </div>
       <div className="rounded-lg border shadow-sm bg-card">
@@ -228,14 +272,13 @@ export function SuppliersTable() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      
-      {isFormOpen && ( // Conditionally render the dialog
+
+      {isFormOpen && (
         <SupplierFormDialog
-            supplier={editingSupplier}
-            onSaveSuccess={handleSaveSuccess}
-            isOpenProp={isFormOpen}
-            onOpenChangeProp={setIsFormOpen}
-            // No triggerButton here as it's controlled by isFormOpen state
+          supplier={editingSupplier}
+          onSaveSuccess={handleSaveSuccess}
+          isOpenProp={isFormOpen}
+          onOpenChangeProp={setIsFormOpen}
         />
       )}
     </>
