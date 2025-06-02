@@ -79,14 +79,13 @@ export function KasirTable() {
     setCurrentUser(getCurrentUserFromStorage());
   }, []);
 
-  const fetchKasirsAndOutlets = useCallback(async () => {
+  const fetchKasirsAndOutlets = useCallback(async (isPostSaveOrDeleteRefresh = false) => {
     if (!currentUser || !currentUser.merchantId) {
-      setKasirs([]);
-      setAllOutlets([]);
+      // Do not clear kasirs/outlets here on initial load if no user, let the render logic handle display
       setIsLoading(false); 
       return;
     }
-    console.log(`[KasirTable] Fetching kasirs and outlets for merchant: ${currentUser.merchantId}`);
+    console.log(`[KasirTable] Fetching kasirs and outlets for merchant: ${currentUser.merchantId}. Is post-save/delete refresh: ${isPostSaveOrDeleteRefresh}`);
     setIsLoading(true); 
     try {
       const merchantId = currentUser.merchantId;
@@ -114,11 +113,20 @@ export function KasirTable() {
 
     } catch (error: any) {
       console.error("[KasirTable] Error fetching kasirs or outlets: ", error);
+      let title = "Data Fetch Failed";
       let desc = `Could not load kasir/outlet data. Firestore Error: ${error.message}.`;
+      let variant: "destructive" | "default" = "destructive";
+
       if (error.code === 'permission-denied') {
-        desc = "Permission denied fetching kasir/outlet data. Check the admin user's Firestore document (role & merchantId) and Firestore Security Rules for read operations on 'users' and 'outlets' collections.";
+        if (isPostSaveOrDeleteRefresh) {
+            title = "Refresh Gagal (Data Tersimpan)";
+            desc = "Data kasir kemungkinan berhasil disimpan/dihapus, tetapi refresh daftar gagal karena masalah izin sementara. Data baru akan muncul setelah memuat ulang halaman atau kunjungan berikutnya.";
+            variant = "default"; // Less alarming for this specific case
+        } else {
+            desc = "Izin ditolak saat mengambil data kasir/outlet. Periksa dokumen admin Anda di Firestore (role & merchantId) dan Aturan Keamanan Firestore untuk operasi baca pada koleksi 'users' dan 'outlets'.";
+        }
       }
-      toast({ title: "Data Fetch Failed", description: desc, variant: "destructive", duration: 9000 });
+      toast({ title, description: desc, variant, duration: 9000 });
       // DO NOT CLEAR kasirs or allOutlets here if it's a refresh failure.
       // The user has been notified by the toast. Existing displayed data will persist.
     }
@@ -127,9 +135,11 @@ export function KasirTable() {
 
   useEffect(() => {
     if (isClient && currentUser && currentUser.merchantId) {
-      fetchKasirsAndOutlets();
+      fetchKasirsAndOutlets(); // Initial fetch
     } else if (isClient && (!currentUser || !currentUser.merchantId)) {
       setIsLoading(false); 
+      setKasirs([]); // Clear if no user or merchantId on client load
+      setAllOutlets([]);
     }
   }, [isClient, currentUser, fetchKasirsAndOutlets]);
 
@@ -229,7 +239,7 @@ export function KasirTable() {
       setEditingKasir(undefined);
       
       setTimeout(() => {
-        fetchKasirsAndOutlets();
+        fetchKasirsAndOutlets(true); // Pass true to indicate it's a post-save refresh
       }, 500); 
 
     } catch (error: any) { 
@@ -246,7 +256,7 @@ export function KasirTable() {
   };
 
   const openNewDialog = () => {
-    if (allOutlets.length === 0) {
+    if (allOutlets.length === 0 && !isLoading) { // Check !isLoading to avoid toast if outlets just haven't loaded yet
         toast({ title: "Cannot Add Kasir", description: "Please add at least one outlet before adding a kasir.", variant: "default" });
         return;
     }
@@ -268,7 +278,7 @@ export function KasirTable() {
         toast({ title: "Kasir Data Deleted", description: `Kasir ${kasirToDelete.name}'s data has been removed from Firestore. Their authentication account may still exist.`, variant: "default" });
         
         setTimeout(() => {
-          fetchKasirsAndOutlets();
+          fetchKasirsAndOutlets(true); // Pass true to indicate it's a post-delete refresh
         }, 500);
 
       } catch (error: any) {
@@ -342,7 +352,7 @@ export function KasirTable() {
   return (
     <>
       <div className="flex justify-end mb-4">
-        <Button onClick={openNewDialog} disabled={isLoading || allOutlets.length === 0}>
+        <Button onClick={openNewDialog} disabled={isLoading || (allOutlets.length === 0 && !isLoading) }>
             <PlusCircle className="mr-2 h-4 w-4" /> Add Kasir
         </Button>
         {allOutlets.length === 0 && !isLoading && (
@@ -390,7 +400,7 @@ export function KasirTable() {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                      <DropdownMenuItem onClick={() => openEditDialog(kasir)} disabled={isLoading || allOutlets.length === 0}>
+                      <DropdownMenuItem onClick={() => openEditDialog(kasir)} disabled={isLoading || (allOutlets.length === 0 && !isLoading) }>
                         <Edit3 className="mr-2 h-4 w-4" /> Edit Details
                       </DropdownMenuItem>
                        <DropdownMenuItem onClick={() => handleChangePassword(kasir)} disabled={isLoading}>
@@ -412,7 +422,7 @@ export function KasirTable() {
                 </TableCell>
               </TableRow>
             )}
-             {isLoading && (kasirs.length > 0 || allOutlets.length > 0) && (
+             {isLoading && (kasirs.length > 0 || allOutlets.length > 0) && !isFormOpen && !showDeleteConfirm && ( // only show table-wide loader if not in a dialog
               <TableRow>
                 <TableCell colSpan={5} className="h-24 text-center">
                   <div className="flex justify-center items-center">
