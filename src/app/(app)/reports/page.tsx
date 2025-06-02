@@ -2,10 +2,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-// import type { Metadata } from 'next'; // Metadata is not used in client components
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -16,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { CalendarIcon, Download, Filter, RotateCcw, Loader2 } from "lucide-react";
+import { CalendarIcon, Download, Filter, RotateCcw, Loader2, Store } from "lucide-react";
 import { format, subDays } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import {
@@ -28,7 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import type { Transaction, Outlet, User } from '@/types';
+import type { Transaction, Outlet, User as FirestoreUserType } from '@/types';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
@@ -37,11 +35,16 @@ interface StoredUser {
   id: string;
   email: string;
   displayName: string;
-  role?: string;
+  role?: 'admin' | 'kasir' | 'superadmin';
   merchantId?: string;
 }
 
-const getCurrentUserFromStorage = (): StoredUser | null => { // Renamed to avoid conflict
+interface StoredOutlet {
+    id: string;
+    name: string;
+}
+
+const getCurrentUserFromStorage = (): StoredUser | null => {
   if (typeof window !== 'undefined') {
     const storedUserStr = localStorage.getItem('mockUser');
     if (storedUserStr) {
@@ -56,34 +59,54 @@ const getCurrentUserFromStorage = (): StoredUser | null => { // Renamed to avoid
   return null;
 };
 
+const getSelectedOutletFromStorage = (): StoredOutlet | null => {
+    if (typeof window !== 'undefined') {
+        const outletId = localStorage.getItem('selectedOutletId');
+        const outletName = localStorage.getItem('selectedOutletName');
+        if (outletId && outletName) {
+            return { id: outletId, name: outletName };
+        }
+    }
+    return null;
+}
+
 export default function ReportsPage() {
-  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
-  const [selectedOutlet, setSelectedOutlet] = useState<string>("all");
-  const [selectedKasir, setSelectedKasir] = useState<string>("all");
+  const [dateRange, setDateRange] = useState<DateRange | undefined>({
+    from: subDays(new Date(), 7),
+    to: new Date(),
+  });
+  const [selectedOutletFilter, setSelectedOutletFilter] = useState<string>("all"); // For admin filter
+  const [selectedKasirFilter, setSelectedKasirFilter] = useState<string>("all");
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("all");
   
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
-  const [allOutlets, setAllOutlets] = useState<Outlet[]>([]);
-  const [allKasirs, setAllKasirs] = useState<User[]>([]);
+  const [allMerchantOutlets, setAllMerchantOutlets] = useState<Outlet[]>([]); // Outlets for admin to filter by
+  const [allMerchantKasirs, setAllMerchantKasirs] = useState<FirestoreUserType[]>([]); // Kasirs for admin to filter by
   const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([]);
   
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const { toast } = useToast();
   
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
+  const [kasirSelectedOutlet, setKasirSelectedOutlet] = useState<StoredOutlet | null>(null);
   const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
-    // This effect runs once on the client after hydration
     setIsClient(true);
-    setCurrentUser(getCurrentUserFromStorage());
+    const user = getCurrentUserFromStorage();
+    setCurrentUser(user);
+    if (user?.role === 'kasir') {
+        const outlet = getSelectedOutletFromStorage();
+        setKasirSelectedOutlet(outlet);
+        if (outlet) {
+            setSelectedOutletFilter(outlet.id); // Lock filter for kasir
+        }
+    }
   }, []);
 
   const fetchReportData = useCallback(async () => {
     if (!isClient || !currentUser || !currentUser.merchantId) {
-      // Don't toast here if it's just an initial state before currentUser is loaded.
-      // Toasting can cause issues if called too early or too often.
-      if (isClient && currentUser && !currentUser.merchantId) {
+      if (isClient && currentUser && !currentUser.merchantId && currentUser.role !== 'superadmin') {
          toast({ title: "Error", description: "Merchant information not found.", variant: "destructive" });
       }
       setIsLoading(false);
@@ -93,20 +116,37 @@ export default function ReportsPage() {
     try {
       const merchantId = currentUser.merchantId;
 
-      // Fetch Outlets
-      const outletsQuery = query(collection(db, "outlets"), where("merchantId", "==", merchantId), orderBy("name", "asc"));
-      const outletsSnapshot = await getDocs(outletsQuery);
-      const fetchedOutlets: Outlet[] = outletsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Outlet));
-      setAllOutlets(fetchedOutlets);
+      // Fetch Outlets (only if admin, kasir uses their single selected outlet)
+      if (currentUser.role === 'admin') {
+        const outletsQuery = query(collection(db, "outlets"), where("merchantId", "==", merchantId), orderBy("name", "asc"));
+        const outletsSnapshot = await getDocs(outletsQuery);
+        const fetchedOutlets: Outlet[] = outletsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Outlet));
+        setAllMerchantOutlets(fetchedOutlets);
+      } else if (currentUser.role === 'kasir' && kasirSelectedOutlet) {
+        setAllMerchantOutlets([{id: kasirSelectedOutlet.id, name: kasirSelectedOutlet.name, merchantId: merchantId, address: ''}]); // Mock structure for consistency
+      }
 
-      // Fetch Kasirs (Users with role 'kasir')
-      const kasirsQuery = query(collection(db, "users"), where("merchantId", "==", merchantId), where("role", "==", "kasir"), orderBy("name", "asc"));
-      const kasirsSnapshot = await getDocs(kasirsQuery);
-      const fetchedKasirs: User[] = kasirsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
-      setAllKasirs(fetchedKasirs);
+      // Fetch Kasirs (Users with role 'kasir' for this merchant)
+      if (currentUser.role === 'admin') { // Only admin can filter by kasir
+        const kasirsQuery = query(collection(db, "users"), where("merchantId", "==", merchantId), where("role", "==", "kasir"), orderBy("name", "asc"));
+        const kasirsSnapshot = await getDocs(kasirsQuery);
+        const fetchedKasirs: FirestoreUserType[] = kasirsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreUserType));
+        setAllMerchantKasirs(fetchedKasirs);
+      }
       
-      // Fetch Transactions
-      const transactionsQuery = query(collection(db, "transactions"), where("merchantId", "==", merchantId), orderBy("timestamp", "desc"));
+      // Build Transactions Query
+      let transactionsQueryConstraints = [
+        where("merchantId", "==", merchantId),
+        orderBy("timestamp", "desc")
+      ];
+
+      // Apply initial filters based on role
+      if (currentUser.role === 'kasir' && kasirSelectedOutlet?.id) {
+        transactionsQueryConstraints.push(where("outletId", "==", kasirSelectedOutlet.id));
+      }
+      // Date range is applied in applyFilters or initial fetch if needed immediately
+
+      const transactionsQuery = query(collection(db, "transactions"), ...transactionsQueryConstraints);
       const transactionsSnapshot = await getDocs(transactionsQuery);
       const fetchedTransactions: Transaction[] = transactionsSnapshot.docs.map(doc => {
         const data = doc.data();
@@ -117,41 +157,32 @@ export default function ReportsPage() {
         } as Transaction;
       });
       setAllTransactions(fetchedTransactions);
-      setFilteredTransactions(fetchedTransactions); 
+      // Apply current filters to fetched transactions
+      applyFilters(fetchedTransactions); 
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching report data:", error);
-      toast({ title: "Fetch Failed", description: "Could not load report data.", variant: "destructive" });
+      toast({ title: "Fetch Failed", description: `Could not load report data: ${error.message}`, variant: "destructive" });
     }
     setIsLoading(false);
-  }, [isClient, currentUser, toast]); // Dependencies for fetchReportData callback
+  }, [isClient, currentUser, toast, kasirSelectedOutlet]); // Dependencies for fetchReportData callback
 
   useEffect(() => {
-    // This effect handles data fetching and initial date range setting
-    // It runs when isClient or currentUser changes.
     if (isClient && currentUser) {
       fetchReportData();
-      // Initialize dateRange only once after currentUser is available and if dateRange is not already set
-      if (!dateRange) { 
-        setDateRange({
-          from: subDays(new Date(), 7),
-          to: new Date(),
-        });
-      }
     } else if (isClient && !currentUser) {
-        // If client is ready but no user (e.g. logged out but somehow on this page)
-        setIsLoading(false); // Ensure loading state is false
+        setIsLoading(false);
         setAllTransactions([]);
         setFilteredTransactions([]);
-        setAllOutlets([]);
-        setAllKasirs([]);
+        setAllMerchantOutlets([]);
+        setAllMerchantKasirs([]);
     }
-  }, [isClient, currentUser, fetchReportData, dateRange]); // dateRange is included to prevent re-setting if it changes by user action
+  }, [isClient, currentUser, fetchReportData]);
 
 
-  const applyFilters = () => {
-    if (isLoading) return;
-    let transactions = [...allTransactions]; 
+  const applyFilters = (sourceTransactions: Transaction[] = allTransactions) => {
+    if (isLoading && !sourceTransactions.length) return; // Prevent filtering if still loading initial data
+    let transactions = [...sourceTransactions]; 
 
     if (dateRange?.from) {
         transactions = transactions.filter(t => {
@@ -167,11 +198,16 @@ export default function ReportsPage() {
             return transactionDate <= toDateEnd;
         });
     }
-    if (selectedOutlet !== "all") {
-      transactions = transactions.filter(t => t.outletId === selectedOutlet);
+
+    // Outlet filter: respects kasir's fixed outlet or admin's selection
+    if (currentUser?.role === 'kasir' && kasirSelectedOutlet?.id) {
+        transactions = transactions.filter(t => t.outletId === kasirSelectedOutlet.id);
+    } else if (selectedOutletFilter !== "all") {
+      transactions = transactions.filter(t => t.outletId === selectedOutletFilter);
     }
-    if (selectedKasir !== "all") {
-      transactions = transactions.filter(t => t.kasirId === selectedKasir);
+
+    if (selectedKasirFilter !== "all" && currentUser?.role !== 'kasir') { // Kasirs don't filter by other kasirs
+      transactions = transactions.filter(t => t.kasirId === selectedKasirFilter);
     }
     if (selectedPaymentMethod !== "all") {
       transactions = transactions.filter(t => t.paymentMethod === selectedPaymentMethod);
@@ -179,13 +215,24 @@ export default function ReportsPage() {
     setFilteredTransactions(transactions);
   };
   
+  // Trigger applyFilters when filter states change
+  useEffect(() => {
+    if (!isLoading) { // Only apply if not initially loading
+        applyFilters();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange, selectedOutletFilter, selectedKasirFilter, selectedPaymentMethod, allTransactions, isLoading]);
+
+
   const resetFilters = () => {
     if (isLoading) return; 
     setDateRange({ from: subDays(new Date(), 7), to: new Date() });
-    setSelectedOutlet("all");
-    setSelectedKasir("all");
+    if (currentUser?.role !== 'kasir') { // Kasir's outlet filter is fixed
+      setSelectedOutletFilter("all");
+    }
+    setSelectedKasirFilter("all");
     setSelectedPaymentMethod("all");
-    setFilteredTransactions(allTransactions);
+    // applyFilters will be called by its own useEffect
   };
 
   const exportToExcel = () => {
@@ -195,8 +242,8 @@ export default function ReportsPage() {
         return {
             ID: t.id,
             Date: format(transactionDate, "yyyy-MM-dd HH:mm"), 
-            Outlet: allOutlets.find(o => o.id === t.outletId)?.name || t.outletName || 'N/A',
-            Kasir: allKasirs.find(k => k.id === t.kasirId)?.name || t.kasirName || 'N/A',
+            Outlet: allMerchantOutlets.find(o => o.id === t.outletId)?.name || t.outletName || 'N/A',
+            Kasir: allMerchantKasirs.find(k => k.id === t.kasirId)?.name || t.kasirName || (currentUser?.role === 'kasir' ? currentUser.displayName : 'N/A'),
             'Payment Method': t.paymentMethod,
             Total: t.totalAmount,
         };
@@ -238,10 +285,19 @@ export default function ReportsPage() {
     );
   }
   
-  if (isClient && currentUser && !currentUser.merchantId) {
+  if (isClient && currentUser && !currentUser.merchantId && currentUser.role !== 'superadmin') {
      return (
       <div className="flex flex-col gap-6 items-center justify-center min-h-[calc(100vh-theme(spacing.28))]">
         <p className="text-muted-foreground text-lg">Merchant information not found for your account.</p>
+      </div>
+    );
+  }
+  
+  if (isClient && currentUser?.role === 'superadmin') {
+    return (
+      <div className="flex flex-col gap-6 items-center justify-center min-h-[calc(100vh-theme(spacing.28))]">
+        <h1 className="text-3xl font-headline font-bold tracking-tight text-foreground">Reports (Superadmin)</h1>
+        <p className="text-muted-foreground">Reports are merchant-specific. No data to display for superadmin here.</p>
       </div>
     );
   }
@@ -250,9 +306,11 @@ export default function ReportsPage() {
   return (
     <div className="flex flex-col gap-6">
        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <h1 className="text-3xl font-headline font-bold tracking-tight text-foreground">Sales Reports</h1>
+        <h1 className="text-3xl font-headline font-bold tracking-tight text-foreground">
+            Sales Reports {currentUser?.role === 'kasir' && kasirSelectedOutlet ? `- ${kasirSelectedOutlet.name}` : ''}
+        </h1>
         <Button onClick={exportToExcel} variant="outline" disabled={isLoading || filteredTransactions.length === 0}>
-          <Download className="mr-2 h-4 w-4" /> Export to Excel
+          <Download className="mr-2 h-4 w-4" /> Export to CSV
         </Button>
       </div>
 
@@ -303,28 +361,45 @@ export default function ReportsPage() {
           
           <div className="space-y-2">
             <Label htmlFor="outlet-filter">Outlet</Label>
-            <Select value={selectedOutlet} onValueChange={setSelectedOutlet} disabled={isLoading || allOutlets.length === 0}>
-              <SelectTrigger id="outlet-filter">
-                <SelectValue placeholder="All Outlets" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Outlets</SelectItem>
-                {allOutlets.map(outlet => (
-                  <SelectItem key={outlet.id} value={outlet.id}>{outlet.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {currentUser?.role === 'kasir' && kasirSelectedOutlet ? (
+                 <Input 
+                    value={kasirSelectedOutlet.name} 
+                    disabled 
+                    className="w-full [&_svg]:hidden" 
+                    prependIcon={<Store className="h-4 w-4 text-muted-foreground mr-2"/>}
+                 />
+            ) : (
+                <Select 
+                    value={selectedOutletFilter} 
+                    onValueChange={setSelectedOutletFilter} 
+                    disabled={isLoading || allMerchantOutlets.length === 0 || currentUser?.role === 'kasir'}
+                >
+                <SelectTrigger id="outlet-filter">
+                    <SelectValue placeholder="All Outlets" />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="all">All Outlets</SelectItem>
+                    {allMerchantOutlets.map(outlet => (
+                    <SelectItem key={outlet.id} value={outlet.id}>{outlet.name}</SelectItem>
+                    ))}
+                </SelectContent>
+                </Select>
+            )}
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="kasir-filter">Kasir</Label>
-            <Select value={selectedKasir} onValueChange={setSelectedKasir} disabled={isLoading || allKasirs.length === 0}>
+            <Select 
+                value={selectedKasirFilter} 
+                onValueChange={setSelectedKasirFilter} 
+                disabled={isLoading || allMerchantKasirs.length === 0 || currentUser?.role === 'kasir'}
+            >
               <SelectTrigger id="kasir-filter">
                 <SelectValue placeholder="All Kasirs" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Kasirs</SelectItem>
-                 {allKasirs.map(kasir => (
+                 {allMerchantKasirs.map(kasir => (
                   <SelectItem key={kasir.id} value={kasir.id}>{kasir.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -345,10 +420,8 @@ export default function ReportsPage() {
             </Select>
           </div>
           <div className="flex gap-2">
-            <Button onClick={applyFilters} className="w-full sm:w-auto" disabled={isLoading}>
-              <Filter className="mr-2 h-4 w-4" /> Apply Filters
-            </Button>
-             <Button onClick={resetFilters} variant="ghost" className="w-full sm:w-auto" disabled={isLoading}>
+            {/* Apply Filters button is removed as filters apply automatically on change via useEffect */}
+             <Button onClick={resetFilters} variant="outline" className="w-full sm:w-auto" disabled={isLoading}>
               <RotateCcw className="mr-2 h-4 w-4" /> Reset
             </Button>
           </div>
@@ -373,7 +446,7 @@ export default function ReportsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading && filteredTransactions.length === 0 ? ( // Show loading indicator in table body only if filters are applied and still loading
+                {isLoading && filteredTransactions.length === 0 && !allTransactions.length ? ( 
                    <TableRow>
                     <TableCell colSpan={5} className="h-24 text-center">
                       <div className="flex justify-center items-center">
@@ -384,11 +457,13 @@ export default function ReportsPage() {
                 ) : filteredTransactions.length > 0 ? (
                   filteredTransactions.map((transaction) => {
                     const transactionDate = transaction.timestamp instanceof Timestamp ? transaction.timestamp.toDate() : new Date(transaction.timestamp);
+                    const outletDisplay = currentUser?.role === 'kasir' && kasirSelectedOutlet ? kasirSelectedOutlet.name : (allMerchantOutlets.find(o => o.id === transaction.outletId)?.name || transaction.outletName || 'N/A');
+                    const kasirDisplay = currentUser?.role === 'kasir' ? currentUser.displayName : (allMerchantKasirs.find(k => k.id === transaction.kasirId)?.name || transaction.kasirName || 'N/A');
                     return (
                     <TableRow key={transaction.id}>
                       <TableCell>{format(transactionDate, "dd MMM yyyy, HH:mm")}</TableCell>
-                      <TableCell>{allOutlets.find(o => o.id === transaction.outletId)?.name || transaction.outletName || 'N/A'}</TableCell>
-                      <TableCell>{allKasirs.find(k => k.id === transaction.kasirId)?.name || transaction.kasirName || 'N/A'}</TableCell>
+                      <TableCell>{outletDisplay}</TableCell>
+                      <TableCell>{kasirDisplay}</TableCell>
                       <TableCell>
                         <Badge variant={transaction.paymentMethod === 'cash' ? 'secondary' : 'outline'} className="capitalize">
                             {transaction.paymentMethod}
@@ -415,4 +490,3 @@ export default function ReportsPage() {
     </div>
   );
 }
-    
