@@ -16,197 +16,185 @@ service cloud.firestore {
     }
 
     function isUserLoggedInAsSuperadmin() {
+      if (!isSignedIn()) { return false; }
       let userData = getUserData(request.auth.uid);
-      return isSignedIn() &&
-             userData != null &&
-             userData.role == 'superadmin';
+      return userData != null && userData.role == 'superadmin';
     }
 
-    // Memeriksa apakah pengguna dengan UID tertentu memiliki peran tertentu.
     function doesUserHaveRole(uid, targetRole) {
+      if (uid == null) { return false; } // Prevent error if uid is null
       let userData = getUserData(uid);
-      return isSignedIn() &&
-             uid != null &&
-             userData != null &&
-             userData.role == targetRole;
+      return userData != null && userData.role == targetRole;
     }
 
-    // Memeriksa apakah pengguna dengan UID tertentu terafiliasi dengan merchantId tertentu.
     function isUserBelongingToMerchant(uid, targetMerchantId) {
+      if (uid == null || targetMerchantId == null) { return false; } // Prevent error if uid or targetMerchantId is null
       let userData = getUserData(uid);
-      return isSignedIn() &&
-             uid != null &&
-             userData != null &&
-             userData.merchantId == targetMerchantId;
+      return userData != null && userData.merchantId == targetMerchantId;
     }
 
     // --- Aturan Global untuk Superadmin ---
-    // Superadmin memiliki akses penuh ke semua dokumen.
+    // Superadmin bisa membaca dan menulis semua dokumen kecuali mengubah/menghapus dirinya sendiri atau superadmin lain dari /users.
     match /{document=**} {
       allow read, write: if isUserLoggedInAsSuperadmin();
     }
 
     // --- Aturan Spesifik per Koleksi ---
     match /users/{userId} {
-      // Apakah pengguna yang diautentikasi adalah pemilik dokumen ini?
       function isDocumentOwner() {
-        return request.auth.uid == userId;
+        return isSignedIn() && request.auth.uid == userId;
       }
 
-      // Apakah pengguna yang meminta adalah admin dari merchant pengguna target?
       function isRequesterAdminOfTargetUsersMerchant() {
-        // Pastikan resource.data ada sebelum mengakses fieldnya
-        return resource.data != null && resource.data.merchantId != null &&
+        // Admin bisa membaca/update user (kasir/admin lain) dalam merchantnya.
+        // Cek dulu apakah data target user (resource.data) ada dan punya merchantId.
+        return isSignedIn() &&
+               resource.data != null && resource.data.merchantId != null &&
                doesUserHaveRole(request.auth.uid, 'admin') &&
                isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId);
       }
 
-      // Fungsi yang disempurnakan: Memeriksa apakah admin saat ini sedang membuat kasir untuk merchantnya sendiri.
       function isCurrentAdminCreatingKasirForOwnMerchant() {
-        let performingAdminData = getUserData(request.auth.uid); // Data admin yang melakukan aksi
-        let newKasirData = request.resource.data; // Data kasir baru yang akan dibuat
-
-        return performingAdminData != null &&                    // 1. Dokumen admin ada
-               performingAdminData.role == 'admin' &&            // 2. Admin memiliki peran 'admin'
-               performingAdminData.merchantId != null &&         // 3. Admin memiliki merchantId
-               newKasirData.merchantId == performingAdminData.merchantId && // 4. merchantId kasir baru cocok dengan merchantId admin
-               newKasirData.role == 'kasir';                     // 5. Pengguna baru dibuat dengan peran 'kasir'
+        // Admin yang login (request.auth.uid) membuat kasir (request.resource.data) untuk merchantId miliknya.
+        // Data admin yang login harus ada, rolenya 'admin', dan punya merchantId.
+        // Data kasir baru harus punya role 'kasir' dan merchantId yang sama dengan merchantId admin.
+        let adminData = getUserData(request.auth.uid);
+        return adminData != null &&
+               adminData.role == 'admin' &&
+               adminData.merchantId != null && // Pastikan admin punya merchantId
+               request.resource.data.merchantId == adminData.merchantId &&
+               request.resource.data.role == 'kasir';
       }
 
-      allow read: if isDocumentOwner() || isRequesterAdminOfTargetUsersMerchant();
+      // Superadmin membuat Admin baru untuk merchant baru (merchantId == admin baru UID) atau merchant yg sudah ada.
+      function isSuperadminCreatingAdmin() {
+        return isUserLoggedInAsSuperadmin() &&
+               request.resource.data.role == 'admin' &&
+               request.resource.data.status == 'active' &&
+               request.resource.data.merchantId != null; // Pastikan merchantId ada
+      }
 
-      // PENTING: Aturan 'create' ini HANYA berlaku untuk penyimpanan data ke Firestore.
-      // Izin untuk MEMBUAT AKUN di Firebase Authentication (misalnya, via createUserWithEmailAndPassword)
-      // diatur oleh layanan Firebase Authentication itu sendiri dan biasanya terbatas jika dipanggil dari klien.
-      // Jika error "Missing or insufficient permissions" terjadi SEBELUM data sampai ke Firestore,
-      // masalahnya kemungkinan besar ada di batasan Firebase Authentication.
-      // Solusi umum untuk itu adalah menggunakan Firebase Functions dengan Admin SDK untuk membuat akun Auth.
-      allow create: if (
-                        // Kasus 1: Superadmin membuat admin baru
-                        isUserLoggedInAsSuperadmin() &&
-                        request.resource.data.role == 'admin' &&
-                        request.resource.data.status == 'active'
-                      ) ||
-                      (
-                        // Kasus 2: Admin membuat kasir baru untuk merchantnya
-                        isCurrentAdminCreatingKasirForOwnMerchant()
-                        // kondisi request.resource.data.role == 'kasir' sudah ada di dalam fungsi
-                      ) ||
-                      (
-                        // Kasus 3: Pengguna mendaftarkan dirinya sendiri sebagai merchant admin baru (pending approval)
-                        request.auth.uid == userId && // Pengguna membuat dokumennya sendiri
-                        request.resource.data.role == 'admin' &&
-                        request.resource.data.status == 'pending_approval' &&
-                        request.resource.data.merchantId == request.auth.uid // merchantId diisi dengan UID admin baru itu sendiri
-                      );
+      // Pengguna mendaftar sendiri sebagai Admin baru, statusnya pending.
+      // merchantId-nya adalah UID-nya sendiri.
+      function isSelfRegisteringAdmin() {
+        return isSignedIn() && // Pengguna harus login untuk membuat dirinya sendiri
+               request.auth.uid == userId && // Hanya bisa membuat dokumen untuk dirinya sendiri
+               request.resource.data.role == 'admin' &&
+               request.resource.data.status == 'pending_approval' &&
+               request.resource.data.merchantId == request.auth.uid; // merchantId adalah UID sendiri
+      }
 
-      allow update: if isDocumentOwner() || isRequesterAdminOfTargetUsersMerchant();
+      allow read: if isDocumentOwner() || isRequesterAdminOfTargetUsersMerchant() || isUserLoggedInAsSuperadmin();
 
-      allow delete: if (
-                        // Superadmin bisa menghapus semua user kecuali dirinya sendiri atau superadmin lain
-                        isUserLoggedInAsSuperadmin() && resource.data.role != 'superadmin' && userId != request.auth.uid
-                       ) ||
-                       (
-                        // Admin bisa menghapus kasir dari merchantnya
-                        doesUserHaveRole(request.auth.uid, 'admin') &&
+      // Kondisi untuk membuat user:
+      // 1. Superadmin membuat Admin baru.
+      // 2. Admin yang login membuat Kasir baru untuk merchantnya.
+      // 3. Pengguna mendaftar sendiri sebagai Admin baru (pending approval).
+      allow create: if isSuperadminCreatingAdmin() ||
+                       isCurrentAdminCreatingKasirForOwnMerchant() || // Fungsi ini sudah cek role kasir
+                       isSelfRegisteringAdmin();
+
+      // Update: pemilik dokumen, atau admin dari merchant user tersebut, atau superadmin.
+      // Superadmin tidak bisa update superadmin lain atau dirinya sendiri melalui path ini.
+      allow update: if isDocumentOwner() ||
+                       isRequesterAdminOfTargetUsersMerchant() ||
+                       (isUserLoggedInAsSuperadmin() && resource.data.role != 'superadmin' && userId != request.auth.uid);
+
+      // Delete: admin menghapus kasir di merchantnya, atau superadmin menghapus non-superadmin.
+      // Superadmin tidak bisa hapus dirinya sendiri atau superadmin lain.
+      allow delete: if (isUserLoggedInAsSuperadmin() && resource.data.role != 'superadmin' && userId != request.auth.uid) ||
+                       (doesUserHaveRole(request.auth.uid, 'admin') &&
                         resource.data != null && resource.data.role == 'kasir' &&
-                        isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId)
-                       );
+                        isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId));
     }
 
     match /outlets/{outletId} {
       function isOutletBelongingToCurrentAdmin() {
-        // Pastikan resource.data ada sebelum mengakses fieldnya
         return resource.data != null && resource.data.merchantId != null &&
                doesUserHaveRole(request.auth.uid, 'admin') &&
                isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId);
       }
       function isCurrentAdminCreatingOutletForOwnMerchant() {
-        let performingAdminData = getUserData(request.auth.uid);
-        return performingAdminData != null &&
-               performingAdminData.role == 'admin' &&
-               performingAdminData.merchantId != null &&
-               request.resource.data.merchantId == performingAdminData.merchantId;
+        let adminData = getUserData(request.auth.uid);
+        return adminData != null &&
+               adminData.role == 'admin' &&
+               adminData.merchantId != null &&
+               request.resource.data.merchantId == adminData.merchantId;
       }
 
-      allow read: if doesUserHaveRole(request.auth.uid, 'admin') && resource.data != null && isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId);
-      allow create: if isCurrentAdminCreatingOutletForOwnMerchant();
-      allow update, delete: if isOutletBelongingToCurrentAdmin();
+      allow read: if (doesUserHaveRole(request.auth.uid, 'admin') && resource.data != null && isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId)) || isUserLoggedInAsSuperadmin();
+      allow create: if isCurrentAdminCreatingOutletForOwnMerchant() || isUserLoggedInAsSuperadmin();
+      allow update, delete: if isOutletBelongingToCurrentAdmin() || isUserLoggedInAsSuperadmin();
     }
 
     match /products/{productId} {
       function isProductBelongingToCurrentAdmin() {
-        // Pastikan resource.data ada sebelum mengakses fieldnya
         return resource.data != null && resource.data.merchantId != null &&
                doesUserHaveRole(request.auth.uid, 'admin') &&
                isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId);
       }
       function isCurrentAdminCreatingProductForOwnMerchant() {
-        let performingAdminData = getUserData(request.auth.uid);
-        return performingAdminData != null &&
-               performingAdminData.role == 'admin' &&
-               performingAdminData.merchantId != null &&
-               request.resource.data.merchantId == performingAdminData.merchantId;
+         let adminData = getUserData(request.auth.uid);
+         return adminData != null &&
+                adminData.role == 'admin' &&
+                adminData.merchantId != null &&
+                request.resource.data.merchantId == adminData.merchantId;
       }
       function isCurrentKasirUpdatingStock() {
-        // Pastikan resource.data ada sebelum mengakses fieldnya
+        // Kasir hanya boleh update field 'units' (untuk stock) dari produk merchantnya.
         return resource.data != null && resource.data.merchantId != null &&
                doesUserHaveRole(request.auth.uid, 'kasir') &&
                isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId) &&
-               // Hanya field 'units' (yang berisi stok) dan 'updatedAt' yang boleh diubah oleh kasir
-               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['units', 'updatedAt']);
+               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['units', 'updatedAt']); // Izinkan juga updatedAt
       }
 
-      allow read: if (doesUserHaveRole(request.auth.uid, 'admin') || doesUserHaveRole(request.auth.uid, 'kasir')) && resource.data != null && isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId);
-      allow create: if isCurrentAdminCreatingProductForOwnMerchant();
-      allow update: if isProductBelongingToCurrentAdmin() || isCurrentKasirUpdatingStock();
-      allow delete: if isProductBelongingToCurrentAdmin();
+      allow read: if ((doesUserHaveRole(request.auth.uid, 'admin') || doesUserHaveRole(request.auth.uid, 'kasir')) && resource.data != null && isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId)) || isUserLoggedInAsSuperadmin();
+      allow create: if isCurrentAdminCreatingProductForOwnMerchant() || isUserLoggedInAsSuperadmin();
+      allow update: if isProductBelongingToCurrentAdmin() || isCurrentKasirUpdatingStock() || isUserLoggedInAsSuperadmin();
+      allow delete: if isProductBelongingToCurrentAdmin() || isUserLoggedInAsSuperadmin();
     }
 
     match /suppliers/{supplierId} {
       function isSupplierBelongingToCurrentAdmin() {
-        // Pastikan resource.data ada sebelum mengakses fieldnya
         return resource.data != null && resource.data.merchantId != null &&
                doesUserHaveRole(request.auth.uid, 'admin') &&
                isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId);
       }
       function isCurrentAdminCreatingSupplierForOwnMerchant() {
-        let performingAdminData = getUserData(request.auth.uid);
-        return performingAdminData != null &&
-               performingAdminData.role == 'admin' &&
-               performingAdminData.merchantId != null &&
-               request.resource.data.merchantId == performingAdminData.merchantId;
+        let adminData = getUserData(request.auth.uid);
+        return adminData != null &&
+               adminData.role == 'admin' &&
+               adminData.merchantId != null &&
+               request.resource.data.merchantId == adminData.merchantId;
       }
 
-      allow read: if isSupplierBelongingToCurrentAdmin(); // Seharusnya: (doesUserHaveRole(request.auth.uid, 'admin') && resource.data != null && isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId))
-      allow create: if isCurrentAdminCreatingSupplierForOwnMerchant();
-      allow update, delete: if isSupplierBelongingToCurrentAdmin();
+      allow read: if isSupplierBelongingToCurrentAdmin() || isUserLoggedInAsSuperadmin();
+      allow create: if isCurrentAdminCreatingSupplierForOwnMerchant() || isUserLoggedInAsSuperadmin();
+      allow update, delete: if isSupplierBelongingToCurrentAdmin() || isUserLoggedInAsSuperadmin();
     }
 
      match /settings/{settingsMerchantId} {
       function isSettingsForCurrentAdminMerchant() {
-        let performingAdminData = getUserData(request.auth.uid);
-        return performingAdminData != null &&
-               performingAdminData.role == 'admin' &&
-               performingAdminData.merchantId != null &&
-               performingAdminData.merchantId == settingsMerchantId;
+        // Hanya admin dari merchantId yang sama dengan settingsMerchantId yang boleh akses.
+        let adminData = getUserData(request.auth.uid);
+        return adminData != null &&
+               adminData.role == 'admin' &&
+               adminData.merchantId == settingsMerchantId;
       }
-      allow read, write: if isSettingsForCurrentAdminMerchant();
+      allow read, write: if isSettingsForCurrentAdminMerchant() || isUserLoggedInAsSuperadmin();
     }
 
     match /transactions/{transactionId} {
-      function isTransactionCreatorKasirOrAdminOfMerchant() {
-        let performingUserData = getUserData(request.auth.uid);
-        return performingUserData != null &&
-               (performingUserData.role == 'kasir' || performingUserData.role == 'admin') &&
-               performingUserData.merchantId == request.resource.data.merchantId && // Pastikan merchantId cocok
-               ( // Jika kasir, pastikan dia punya akses ke outlet transaksi
-                 performingUserData.role == 'admin' ||
-                 (performingUserData.role == 'kasir' && performingUserData.outlets != null && request.resource.data.outletId in performingUserData.outlets)
-               );
+      function isKasirOrAdminOfMerchantCreatingTransaction() {
+        let userData = getUserData(request.auth.uid);
+        return userData != null &&
+               (userData.role == 'kasir' || userData.role == 'admin') &&
+               userData.merchantId == request.resource.data.merchantId && // Transaksi untuk merchantnya sendiri
+               (userData.role == 'admin' || (userData.outlets != null && request.resource.data.outletId in userData.outlets)); // Admin bisa untuk semua outletnya, kasir hanya untuk outlet yg diassign
       }
-      allow create: if isTransactionCreatorKasirOrAdminOfMerchant();
-      allow read: if (doesUserHaveRole(request.auth.uid, 'admin') || doesUserHaveRole(request.auth.uid, 'kasir')) && resource.data != null && isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId);
+
+      allow create: if isKasirOrAdminOfMerchantCreatingTransaction() || isUserLoggedInAsSuperadmin();
+      allow read: if ((doesUserHaveRole(request.auth.uid, 'admin') || doesUserHaveRole(request.auth.uid, 'kasir')) && resource.data != null && isUserBelongingToMerchant(request.auth.uid, resource.data.merchantId)) || isUserLoggedInAsSuperadmin();
     }
   }
 }
