@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -11,8 +10,8 @@ import { Trash2, Search, DollarSign, QrCode, CreditCard, ShoppingCart, Loader2 }
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { db, serverTimestamp } from '@/lib/firebase';
-import { collection, query, where, getDocs, addDoc, doc, runTransaction, Timestamp } from 'firebase/firestore';
-import type { Product as FirestoreProduct, Transaction as FirestoreTransaction, TransactionItem } from '@/types';
+import { collection, query, where, getDocs, addDoc, doc, runTransaction, Timestamp, getDoc } from 'firebase/firestore';
+import type { Product as FirestoreProduct, Transaction as FirestoreTransaction, TransactionItem, SystemSettings } from '@/types';
 
 // Local interface for user data from localStorage
 interface StoredUser {
@@ -52,7 +51,9 @@ export default function POSPage() {
   const [cashReceived, setCashReceived] = useState(0);
 
   const [firestoreProducts, setFirestoreProducts] = useState<FirestoreProduct[]>([]);
+  const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
@@ -70,14 +71,12 @@ export default function POSPage() {
         setCurrentUser(JSON.parse(userStr));
       } else {
         toast({ title: "Error", description: "User not identified. Please re-login.", variant: "destructive" });
-        // Optionally redirect to login
       }
 
       if (outletStr && outletNameStr) {
         setSelectedOutlet({ id: outletStr, name: outletNameStr });
       } else {
         toast({ title: "Error", description: "Outlet not selected. Please select an outlet.", variant: "destructive" });
-        // Optionally redirect to select-outlet
       }
     }
   }, [toast]);
@@ -106,11 +105,36 @@ export default function POSPage() {
     setIsLoadingProducts(false);
   }, [currentUser?.merchantId, toast]);
 
+  const fetchSystemSettings = useCallback(async () => {
+    if (!currentUser?.merchantId) {
+        setIsLoadingSettings(false);
+        setSystemSettings({ ppnRate: 0, discountRate: 0 }); // Default if no merchant
+        return;
+    }
+    setIsLoadingSettings(true);
+    try {
+        const settingsRef = doc(db, "settings", currentUser.merchantId);
+        const docSnap = await getDoc(settingsRef);
+        if (docSnap.exists()) {
+            setSystemSettings(docSnap.data() as SystemSettings);
+        } else {
+            setSystemSettings({ ppnRate: 0, discountRate: 0 }); // Default if no settings found
+            toast({ title: "Settings Info", description: "No specific PPN/Discount settings found for this merchant. Using 0%.", variant: "default" });
+        }
+    } catch (error) {
+        console.error("Error fetching system settings:", error);
+        toast({ title: "Settings Fetch Failed", description: "Could not load PPN/Discount settings. Using 0%.", variant: "destructive" });
+        setSystemSettings({ ppnRate: 0, discountRate: 0 }); // Default on error
+    }
+    setIsLoadingSettings(false);
+  }, [currentUser?.merchantId, toast]);
+
   useEffect(() => {
     if (currentUser?.merchantId) {
       fetchProducts();
+      fetchSystemSettings();
     }
-  }, [currentUser, fetchProducts]);
+  }, [currentUser, fetchProducts, fetchSystemSettings]);
 
   const addToCart = (product: FirestoreProduct) => {
     const unitToAdd = getDisplayUnit(product);
@@ -176,11 +200,17 @@ export default function POSPage() {
   };
   
   const subtotal = cart.reduce((sum, item) => sum + item.pricePerUnit * item.quantity, 0);
-  const ppnRate = 0.11; // 11% - TODO: Fetch from merchant settings
-  const discountRate = 0.00; // 0% - TODO: Fetch from merchant settings or implement discount logic
-  const discountAmount = subtotal * discountRate;
+  
+  // Use fetched system settings or default to 0 if still loading or null
+  const ppnRateValue = systemSettings?.ppnRate ?? 0;
+  const discountRateValue = systemSettings?.discountRate ?? 0;
+
+  const ppnRateForCalc = ppnRateValue / 100;
+  const discountRateForCalc = discountRateValue / 100;
+
+  const discountAmount = subtotal * discountRateForCalc;
   const subtotalAfterDiscount = subtotal - discountAmount;
-  const ppnAmount = subtotalAfterDiscount * ppnRate;
+  const ppnAmount = subtotalAfterDiscount * ppnRateForCalc;
   const totalAmount = subtotalAfterDiscount + ppnAmount;
   const changeGiven = paymentMethod === 'cash' && cashReceived > totalAmount ? cashReceived - totalAmount : 0;
 
@@ -268,7 +298,7 @@ export default function POSPage() {
       toast({ title: "Payment Successful!", description: `Total: Rp ${totalAmount.toFixed(0)}. Stocks updated.` });
       setCart([]);
       setCashReceived(0);
-      fetchProducts(); // Re-fetch products to get updated stock levels for the UI
+      fetchProducts(); 
     
     } catch (error: any) {
       console.error("Error processing payment:", error);
@@ -298,10 +328,12 @@ export default function POSPage() {
         </CardHeader>
         <CardContent className="flex-1 p-0 overflow-hidden">
           <ScrollArea className="h-full p-4 pt-0">
-            {isLoadingProducts ? (
+            {isLoadingProducts || isLoadingSettings ? (
               <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                 <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-                <p className="text-lg">Loading products...</p>
+                <p className="text-lg">
+                    {isLoadingProducts && isLoadingSettings ? "Loading products & settings..." : isLoadingProducts ? "Loading products..." : "Loading settings..."}
+                </p>
               </div>
             ) : filteredProducts.length === 0 && firestoreProducts.length > 0 ? (
                  <p className="col-span-full text-center text-muted-foreground py-10">No products match your search.</p>
@@ -386,11 +418,11 @@ export default function POSPage() {
               <span>{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(subtotal)}</span>
             </div>
             <div className="flex justify-between text-sm text-destructive">
-              <span>Discount ({(discountRate*100).toFixed(0)}%)</span>
+              <span>Discount ({(discountRateValue).toFixed(0)}%)</span>
               <span>- {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(discountAmount)}</span>
             </div>
              <div className="flex justify-between text-sm">
-              <span>PPN ({(ppnRate*100).toFixed(0)}%)</span>
+              <span>PPN ({(ppnRateValue).toFixed(0)}%)</span>
               <span>{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(ppnAmount)}</span>
             </div>
             <Separator />
@@ -423,7 +455,12 @@ export default function POSPage() {
                 )}
               </div>
             )}
-            <Button size="lg" className="w-full font-headline mt-2" onClick={handlePayment} disabled={totalAmount <=0 || isProcessingPayment || !currentUser || !selectedOutlet}>
+            <Button 
+                size="lg" 
+                className="w-full font-headline mt-2" 
+                onClick={handlePayment} 
+                disabled={isLoadingSettings || totalAmount <=0 || isProcessingPayment || !currentUser || !selectedOutlet}
+            >
               {isProcessingPayment ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <CreditCard className="mr-2 h-5 w-5" />}
               {isProcessingPayment ? "Processing..." : "Proceed to Payment"}
             </Button>
@@ -433,4 +470,3 @@ export default function POSPage() {
     </div>
   );
 }
-
