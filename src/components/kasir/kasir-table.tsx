@@ -64,7 +64,7 @@ const getCurrentUserFromStorage = (): StoredUser | null => {
 export function KasirTable() {
   const [kasirs, setKasirs] = useState<User[]>([]);
   const [allOutlets, setAllOutlets] = useState<Outlet[]>([]);
-  const [isLoading, setIsLoading] = useState(true); // General loading for the table/component actions
+  const [isLoading, setIsLoading] = useState(true); 
   const [editingKasir, setEditingKasir] = useState<User | undefined>(undefined);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -81,12 +81,21 @@ export function KasirTable() {
 
   const fetchKasirsAndOutlets = useCallback(async (isPostSaveOrDeleteRefresh = false) => {
     if (!currentUser || !currentUser.merchantId) {
-      // Do not clear kasirs/outlets here on initial load if no user, let the render logic handle display
       setIsLoading(false); 
+      if (!isPostSaveOrDeleteRefresh) { // Only clear if it's not a refresh attempt after an action
+        setKasirs([]);
+        setAllOutlets([]);
+      }
       return;
     }
     console.log(`[KasirTable] Fetching kasirs and outlets for merchant: ${currentUser.merchantId}. Is post-save/delete refresh: ${isPostSaveOrDeleteRefresh}`);
-    setIsLoading(true); 
+    if (!isPostSaveOrDeleteRefresh) { // Only set global loading if it's an initial fetch
+      setIsLoading(true); 
+    }
+    
+    let kasirsFetchedSuccessfully = false;
+    let outletsFetchedSuccessfully = false;
+
     try {
       const merchantId = currentUser.merchantId;
 
@@ -99,6 +108,7 @@ export function KasirTable() {
       const kasirsSnapshot = await getDocs(kasirsQuery);
       const fetchedKasirs: User[] = kasirsSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as User));
       setKasirs(fetchedKasirs);
+      kasirsFetchedSuccessfully = true;
       console.log(`[KasirTable] Fetched ${fetchedKasirs.length} kasirs.`);
 
       const outletsQuery = query(
@@ -109,6 +119,7 @@ export function KasirTable() {
       const outletsSnapshot = await getDocs(outletsQuery);
       const fetchedOutlets: Outlet[] = outletsSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as Outlet));
       setAllOutlets(fetchedOutlets);
+      outletsFetchedSuccessfully = true;
       console.log(`[KasirTable] Fetched ${fetchedOutlets.length} outlets.`);
 
     } catch (error: any) {
@@ -117,29 +128,37 @@ export function KasirTable() {
       let desc = `Could not load kasir/outlet data. Firestore Error: ${error.message}.`;
       let variant: "destructive" | "default" = "destructive";
 
-      if (error.code === 'permission-denied') {
-        if (isPostSaveOrDeleteRefresh) {
-            title = "Refresh Gagal (Data Tersimpan)";
-            desc = "Data kasir kemungkinan berhasil disimpan/dihapus, tetapi refresh daftar gagal karena masalah izin sementara. Data baru akan muncul setelah memuat ulang halaman atau kunjungan berikutnya.";
-            variant = "default"; // Less alarming for this specific case
-        } else {
-            desc = "Izin ditolak saat mengambil data kasir/outlet. Periksa dokumen admin Anda di Firestore (role & merchantId) dan Aturan Keamanan Firestore untuk operasi baca pada koleksi 'users' dan 'outlets'.";
-        }
+      if (isPostSaveOrDeleteRefresh) {
+          title = "Refresh Gagal (Data Tersimpan)";
+          desc = "Data kasir kemungkinan berhasil disimpan/dihapus, tetapi refresh daftar gagal karena masalah izin sementara. Data baru akan muncul setelah memuat ulang halaman atau kunjungan berikutnya.";
+          variant = "default";
+      } else if (error.code === 'permission-denied') {
+          desc = "Izin ditolak saat mengambil data kasir/outlet. Periksa dokumen admin Anda di Firestore (role & merchantId) dan Aturan Keamanan Firestore untuk operasi baca pada koleksi 'users' dan 'outlets'.";
       }
       toast({ title, description: desc, variant, duration: 9000 });
-      // DO NOT CLEAR kasirs or allOutlets here if it's a refresh failure.
-      // The user has been notified by the toast. Existing displayed data will persist.
+      
+      // If it's not a post-action refresh and something fails, we might want to clear
+      // to indicate a fundamental loading issue. But if it's a refresh, preserve old data.
+      if (!isPostSaveOrDeleteRefresh) {
+        if (!kasirsFetchedSuccessfully) setKasirs([]);
+        if (!outletsFetchedSuccessfully) setAllOutlets([]);
+      }
+    } finally {
+      if (!isPostSaveOrDeleteRefresh) {
+        setIsLoading(false); 
+      }
     }
-    setIsLoading(false); 
   }, [currentUser, toast]);
 
   useEffect(() => {
-    if (isClient && currentUser && currentUser.merchantId) {
-      fetchKasirsAndOutlets(); // Initial fetch
-    } else if (isClient && (!currentUser || !currentUser.merchantId)) {
-      setIsLoading(false); 
-      setKasirs([]); // Clear if no user or merchantId on client load
-      setAllOutlets([]);
+    if (isClient) {
+      if (currentUser && currentUser.merchantId) {
+        fetchKasirsAndOutlets(false); // Initial fetch
+      } else {
+        setIsLoading(false); 
+        setKasirs([]); 
+        setAllOutlets([]); 
+      }
     }
   }, [isClient, currentUser, fetchKasirsAndOutlets]);
 
@@ -147,14 +166,14 @@ export function KasirTable() {
     data: { name: string; email: string; password?: string; outlets: string[] },
     kasirIdToUpdate?: string
   ) => {
-    console.log("[KasirTable] handleSaveKasir called. Current admin user:", currentUser);
     if (!currentUser || !currentUser.merchantId) {
       toast({ title: "Error: Admin Not Identified", description: "Merchant admin (current user) not identified or missing merchantId. Cannot save kasir.", variant: "destructive" });
       return;
     }
-    console.log("[KasirTable] Admin's Merchant ID for new/updated kasir:", currentUser.merchantId);
+    
+    const operationIsLoading = true; // Local loading state for this operation
+    setIsLoading(operationIsLoading); 
 
-    setIsLoading(true); 
     try {
       if (kasirIdToUpdate) {
         const kasirRef = doc(db, "users", kasirIdToUpdate);
@@ -172,19 +191,16 @@ export function KasirTable() {
       } else {
         if (!data.password) {
           toast({ title: "Error: Password Required", description: "Password is required for new kasir.", variant: "destructive" });
-          setIsLoading(false);
+          setIsLoading(false); // Reset global loading if only form validation failed
           return;
         }
 
         let firebaseUser: AuthUser | null = null;
         try {
-          console.log(`[KasirTable] Attempting to create Auth user: ${data.email} by Admin: ${currentUser.email} (UID: ${currentUser.id}) for Merchant ID: ${currentUser.merchantId}`);
           const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
           firebaseUser = userCredential.user;
-          console.log(`[KasirTable] Auth user ${data.email} created successfully with UID: ${firebaseUser.uid}`);
           await updateAuthProfile(firebaseUser, { displayName: data.name });
         } catch (authError: any) {
-          console.error("[KasirTable] Firebase Auth user creation FAILED:", authError);
           let title = "Kasir Auth Creation Failed";
           let description = `Could not create authentication account for ${data.email}. `;
           if (authError.code === 'auth/email-already-in-use') {
@@ -198,7 +214,7 @@ export function KasirTable() {
             description += `Auth Error for ${data.email}: ${authError.message} (Code: ${authError.code})`;
           }
           toast({ title, description, variant: "destructive", duration: 10000 });
-          setIsLoading(false);
+          setIsLoading(false); 
           return; 
         }
 
@@ -215,12 +231,9 @@ export function KasirTable() {
         };
 
         try {
-          console.log(`[KasirTable] Attempting to set Firestore document for kasir: users/${firebaseUser.uid} with data:`, newKasirDoc);
           await setDoc(doc(db, "users", firebaseUser.uid), newKasirDoc);
-          console.log(`[KasirTable] Firestore document for kasir ${data.name} created successfully.`);
           toast({ title: "Kasir Added Successfully", description: `Kasir ${data.name} (${data.email}) has been added and Auth account created.` });
         } catch (firestoreError: any) {
-          console.error("[KasirTable] Firestore document creation FAILED for kasir:", firestoreError);
           let title = "Kasir Firestore Save Failed";
           let description = `Kasir Auth account for ${data.email} was created, but saving details to Firestore failed. Manual cleanup of Auth user ${data.email} (UID: ${firebaseUser.uid}) might be needed. `;
            if (firestoreError.code === 'permission-denied' || (firestoreError.message && firestoreError.message.toLowerCase().includes("permission"))) {
@@ -239,14 +252,14 @@ export function KasirTable() {
       setEditingKasir(undefined);
       
       setTimeout(() => {
-        fetchKasirsAndOutlets(true); // Pass true to indicate it's a post-save refresh
+        fetchKasirsAndOutlets(true); 
       }, 500); 
 
     } catch (error: any) { 
       console.error("[KasirTable] Unexpected error in handleSaveKasir: ", error);
       toast({ title: "Save Kasir Failed (Unexpected)", description: `An unexpected error occurred: ${error.message || error.toString()}`, variant: "destructive", duration: 9000 });
     } finally {
-      setIsLoading(false); 
+      setIsLoading(false); // Ensure global loading is reset
     }
   };
 
@@ -256,7 +269,7 @@ export function KasirTable() {
   };
 
   const openNewDialog = () => {
-    if (allOutlets.length === 0 && !isLoading) { // Check !isLoading to avoid toast if outlets just haven't loaded yet
+    if (allOutlets.length === 0 && !isLoading) { 
         toast({ title: "Cannot Add Kasir", description: "Please add at least one outlet before adding a kasir.", variant: "default" });
         return;
     }
@@ -271,18 +284,17 @@ export function KasirTable() {
 
   const confirmDelete = async () => {
     if (kasirToDelete) {
-      setIsLoading(true);
+      const operationIsLoading = true;
+      setIsLoading(operationIsLoading);
       try {
-        console.log(`[KasirTable] Attempting to delete Firestore document for kasir: users/${kasirToDelete.id}`);
         await deleteDoc(doc(db, "users", kasirToDelete.id));
         toast({ title: "Kasir Data Deleted", description: `Kasir ${kasirToDelete.name}'s data has been removed from Firestore. Their authentication account may still exist.`, variant: "default" });
         
         setTimeout(() => {
-          fetchKasirsAndOutlets(true); // Pass true to indicate it's a post-delete refresh
+          fetchKasirsAndOutlets(true); 
         }, 500);
 
       } catch (error: any) {
-        console.error("[KasirTable] Error deleting kasir data from Firestore:", error);
         let errMsg = `Could not delete kasir data: ${error.message}`;
         if (error.code === 'permission-denied') {
             errMsg = `Permission denied when trying to delete kasir data (users/${kasirToDelete.id}). Check Firestore rules for user ${currentUser?.email}.`;
@@ -340,7 +352,8 @@ export function KasirTable() {
     );
   }
 
-  if (isLoading && kasirs.length === 0 && allOutlets.length === 0 && (!isFormOpen && !showDeleteConfirm) ) {
+  // Global loading state for initial data load
+  if (isLoading && !isFormOpen && !showDeleteConfirm) {
      return (
       <div className="flex flex-col items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
@@ -422,15 +435,7 @@ export function KasirTable() {
                 </TableCell>
               </TableRow>
             )}
-             {isLoading && (kasirs.length > 0 || allOutlets.length > 0) && !isFormOpen && !showDeleteConfirm && ( // only show table-wide loader if not in a dialog
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
-                  <div className="flex justify-center items-center">
-                    <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Updating list...
-                  </div>
-                </TableCell>
-              </TableRow>
-            )}
+             {/* This explicit table-wide loader is removed as the main page loader covers it */}
           </TableBody>
         </Table>
       </div>
@@ -468,3 +473,4 @@ export function KasirTable() {
   );
 }
 
+    
