@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -12,13 +12,13 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MoreHorizontal, Edit3, Trash2, PlusCircle, KeyRound, Store } from "lucide-react";
+import { MoreHorizontal, Edit3, Trash2, PlusCircle, KeyRound, Store, Loader2, UserX } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator, // Added import
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { User, Outlet } from "@/types";
@@ -34,59 +34,170 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { db, auth, serverTimestamp } from '@/lib/firebase';
+import { collection, query, where, getDocs, doc, setDoc, updateDoc, deleteDoc, orderBy } from 'firebase/firestore';
+import { createUserWithEmailAndPassword, updateProfile as updateAuthProfile } from 'firebase/auth';
 
-// Mock data
-const mockKasirsData: User[] = [
-  { id: "kasir_1", name: "Andi Setiawan", email: "andi.s@example.com", role: "kasir", outlets: ["outlet_1", "outlet_2"], status: "active", merchantId: "merch_1" },
-  { id: "kasir_2", name: "Bunga Citra", email: "bunga.c@example.com", role: "kasir", outlets: ["outlet_1"], status: "active", merchantId: "merch_1" },
-  { id: "kasir_3", name: "Charlie Darmawan", email: "charlie.d@example.com", role: "kasir", outlets: ["outlet_2", "outlet_3"], status: "inactive", merchantId: "merch_1" },
-];
+interface StoredUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role?: string;
+  merchantId?: string;
+}
 
-const mockAllOutlets: Outlet[] = [
-  { id: "outlet_1", name: "Main Outlet", address: "Jl. Sudirman No. 123", merchantId: "merch_1" },
-  { id: "outlet_2", name: "Branch Kemang", address: "Jl. Kemang Raya No. 45", merchantId: "merch_1" },
-  { id: "outlet_3", name: "Warehouse Cilandak", address: "Jl. TB Simatupang Kav. 6", merchantId: "merch_1" },
-];
-
+const getCurrentUserFromStorage = (): StoredUser | null => {
+  if (typeof window !== 'undefined') {
+    const storedUserStr = localStorage.getItem('mockUser');
+    if (storedUserStr) {
+      try {
+        return JSON.parse(storedUserStr) as StoredUser;
+      } catch (e) {
+        console.error("Failed to parse user from localStorage in KasirTable", e);
+        return null;
+      }
+    }
+  }
+  return null;
+};
 
 export function KasirTable() {
-  const [kasirs, setKasirs] = useState<User[]>(mockKasirsData);
+  const [kasirs, setKasirs] = useState<User[]>([]);
+  const [allOutlets, setAllOutlets] = useState<Outlet[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [editingKasir, setEditingKasir] = useState<User | undefined>(undefined);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [kasirToDelete, setKasirToDelete] = useState<User | null>(null);
   const { toast } = useToast();
 
-  const handleSaveKasir = async (data: Omit<User, 'id' | 'role' | 'status' | 'merchantId'> & { id?: string, password?: string }, kasirIdToUpdate?: string) => {
-     return new Promise<void>((resolve) => {
-        setTimeout(() => {
-            const kasirToSave = {
-                ...data,
-                role: 'kasir' as const,
-                status: editingKasir ? editingKasir.status : 'active' as const, // Retain status if editing, else active
-                merchantId: 'merch_1',
-            };
+  const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
+  const [isClient, setIsClient] = useState(false);
 
-            if (kasirIdToUpdate) { // Editing existing kasir
-                setKasirs(kasirs.map(k => k.id === kasirIdToUpdate ? { ...k, ...kasirToSave, id: kasirIdToUpdate } : k));
-                toast({ title: "Kasir Updated", description: `Kasir ${data.name} has been updated.`});
-            } else { // Adding new kasir
-                const newKasir: User = { ...kasirToSave, id: `kasir_${Date.now()}`};
-                setKasirs([newKasir, ...kasirs]);
-                toast({ title: "Kasir Added", description: `Kasir ${newKasir.name} has been added.`});
-            }
-            setEditingKasir(undefined);
-            setIsFormOpen(false);
-            resolve();
-        }, 500);
-    });
+  useEffect(() => {
+    setIsClient(true);
+    setCurrentUser(getCurrentUserFromStorage());
+  }, []);
+
+  const fetchKasirsAndOutlets = useCallback(async () => {
+    if (!currentUser || !currentUser.merchantId) {
+      setKasirs([]);
+      setAllOutlets([]);
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const merchantId = currentUser.merchantId;
+
+      // Fetch Kasirs
+      const kasirsQuery = query(
+        collection(db, "users"),
+        where("merchantId", "==", merchantId),
+        where("role", "==", "kasir"),
+        orderBy("name", "asc")
+      );
+      const kasirsSnapshot = await getDocs(kasirsQuery);
+      const fetchedKasirs: User[] = kasirsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+      setKasirs(fetchedKasirs);
+
+      // Fetch Outlets
+      const outletsQuery = query(
+        collection(db, "outlets"),
+        where("merchantId", "==", merchantId),
+        orderBy("name", "asc")
+      );
+      const outletsSnapshot = await getDocs(outletsQuery);
+      const fetchedOutlets: Outlet[] = outletsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Outlet));
+      setAllOutlets(fetchedOutlets);
+
+    } catch (error: any) {
+      console.error("Error fetching kasirs or outlets: ", error);
+      toast({ title: "Fetch Failed", description: `Could not load data: ${error.message}`, variant: "destructive" });
+      setKasirs([]);
+      setAllOutlets([]);
+    }
+    setIsLoading(false);
+  }, [currentUser, toast]);
+
+  useEffect(() => {
+    if (isClient && currentUser && currentUser.merchantId) {
+      fetchKasirsAndOutlets();
+    } else if (isClient && (!currentUser || !currentUser.merchantId)) {
+      setIsLoading(false);
+    }
+  }, [isClient, currentUser, fetchKasirsAndOutlets]);
+
+  const handleSaveKasir = async (
+    data: { name: string; email: string; password?: string; outlets: string[] },
+    kasirIdToUpdate?: string
+  ) => {
+    if (!currentUser || !currentUser.merchantId) {
+      toast({ title: "Error", description: "Merchant admin not identified.", variant: "destructive" });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      if (kasirIdToUpdate) { // Editing existing kasir
+        const kasirRef = doc(db, "users", kasirIdToUpdate);
+        const updateData: Partial<User> = {
+          name: data.name,
+          email: data.email, // Note: Changing email in Firestore doesn't change Firebase Auth email.
+          outlets: data.outlets,
+          // Password changes for existing users are complex and ideally handled via Firebase Admin SDK or separate flows.
+          // Here, we're only updating Firestore data.
+        };
+        await updateDoc(kasirRef, updateData);
+        toast({ title: "Kasir Updated", description: `Kasir ${data.name} has been updated.` });
+      } else { // Adding new kasir
+        if (!data.password) {
+          toast({ title: "Error", description: "Password is required for new kasir.", variant: "destructive" });
+          setIsLoading(false);
+          return;
+        }
+        // 1. Create user in Firebase Auth
+        const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
+        const firebaseUser = userCredential.user;
+
+        // 2. Update Firebase Auth profile (optional)
+        await updateAuthProfile(firebaseUser, { displayName: data.name });
+
+        // 3. Save user data to Firestore
+        const newKasirDoc: User = {
+          id: firebaseUser.uid,
+          name: data.name,
+          email: data.email,
+          role: 'kasir',
+          status: 'active',
+          merchantId: currentUser.merchantId,
+          outlets: data.outlets,
+          createdAt: serverTimestamp(),
+        };
+        await setDoc(doc(db, "users", firebaseUser.uid), newKasirDoc);
+        toast({ title: "Kasir Added", description: `Kasir ${data.name} has been added.` });
+      }
+      fetchKasirsAndOutlets(); // Refresh list
+      setEditingKasir(undefined);
+      setIsFormOpen(false);
+    } catch (error: any) {
+      console.error("Error saving kasir: ", error);
+      let errMsg = `Could not save kasir: ${error.message}.`;
+      if (error.code === 'auth/email-already-in-use') {
+        errMsg = "This email is already registered in Firebase Authentication.";
+      } else if (error.code === 'auth/weak-password') {
+        errMsg = "The password is too weak.";
+      }
+      toast({ title: "Save Failed", description: errMsg, variant: "destructive" });
+    }
+    setIsLoading(false);
   };
-  
+
   const openEditDialog = (kasir: User) => {
     setEditingKasir(kasir);
     setIsFormOpen(true);
   };
-  
+
   const openNewDialog = () => {
     setEditingKasir(undefined);
     setIsFormOpen(true);
@@ -97,31 +208,82 @@ export function KasirTable() {
     setShowDeleteConfirm(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (kasirToDelete) {
-      setKasirs(kasirs.filter(k => k.id !== kasirToDelete.id));
-      toast({ title: "Kasir Deleted", description: `Kasir ${kasirToDelete.name} has been deleted.`, variant: "destructive" });
+      setIsLoading(true);
+      try {
+        // Deleting Firestore document. Auth user deletion is more complex.
+        await deleteDoc(doc(db, "users", kasirToDelete.id));
+        toast({ title: "Kasir Data Deleted", description: `Kasir ${kasirToDelete.name}'s data has been removed from Firestore. Their authentication account may still exist.`, variant: "default" });
+        fetchKasirsAndOutlets();
+      } catch (error: any) {
+        console.error("Error deleting kasir data: ", error);
+        toast({ title: "Delete Failed", description: `Could not delete kasir data: ${error.message}`, variant: "destructive" });
+      }
+      setIsLoading(false);
     }
     setShowDeleteConfirm(false);
     setKasirToDelete(null);
   };
-  
+
   const handleChangePassword = (kasir: User) => {
-    // Placeholder for password change functionality
-    // Typically, this would open a new dialog or redirect to a password change form
-    toast({ title: "Change Password", description: `Initiate password change for ${kasir.name}. (Not implemented)`});
+    toast({ title: "Password Management", description: `Password changes for ${kasir.name} should be handled securely (e.g., Firebase Console, admin SDK, or user-initiated reset).` });
   };
 
+  if (!isClient) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Initializing...</p>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <>
+        <div className="flex justify-end mb-4">
+          <Button disabled><PlusCircle className="mr-2 h-4 w-4" /> Add Kasir</Button>
+        </div>
+        <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+          <UserX className="h-12 w-12 mb-4 text-destructive" />
+          <p>User not authenticated. Please log in.</p>
+        </div>
+      </>
+    );
+  }
+
+  if (!currentUser.merchantId) {
+    return (
+      <>
+        <div className="flex justify-end mb-4">
+          <Button disabled><PlusCircle className="mr-2 h-4 w-4" /> Add Kasir</Button>
+        </div>
+        <div className="p-4 text-center text-destructive-foreground bg-destructive/80 rounded-md">
+          Merchant information is missing for your account. Cannot manage kasirs.
+        </div>
+      </>
+    );
+  }
+  
+  if (isLoading && kasirs.length === 0 && allOutlets.length === 0) {
+     return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Loading kasir and outlet data...</p>
+      </div>
+    );
+  }
 
   return (
     <>
       <div className="flex justify-end mb-4">
-         <KasirFormDialog 
-            kasir={editingKasir} 
-            allOutlets={mockAllOutlets} 
-            onSave={handleSaveKasir}
-            triggerButton={<Button onClick={openNewDialog}><PlusCircle className="mr-2 h-4 w-4" /> Add Kasir</Button>}
-        />
+        <Button onClick={openNewDialog} disabled={isLoading || allOutlets.length === 0}>
+            <PlusCircle className="mr-2 h-4 w-4" /> Add Kasir
+        </Button>
+        {allOutlets.length === 0 && !isLoading && (
+            <p className="text-sm text-destructive ml-2 self-center">Please add outlets first to assign kasirs.</p>
+        )}
       </div>
       <div className="rounded-lg border shadow-sm bg-card">
         <Table>
@@ -142,7 +304,7 @@ export function KasirTable() {
                 <TableCell>
                   {kasir.outlets && kasir.outlets.length > 0 ? (
                     kasir.outlets.map(outletId => {
-                      const outlet = mockAllOutlets.find(o => o.id === outletId);
+                      const outlet = allOutlets.find(o => o.id === outletId);
                       return <Badge key={outletId} variant="secondary" className="mr-1 mb-1 gap-1"><Store className="h-3 w-3"/>{outlet ? outlet.name : 'Unknown Outlet'}</Badge>;
                     })
                   ) : (
@@ -151,35 +313,35 @@ export function KasirTable() {
                 </TableCell>
                 <TableCell>
                   <Badge variant={kasir.status === 'active' ? 'default' : 'destructive'} className="capitalize bg-opacity-20 border-opacity-50">
-                    {kasir.status.replace('_', ' ')}
+                    {kasir.status?.replace('_', ' ') || 'N/A'}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" className="h-8 w-8 p-0">
+                      <Button variant="ghost" className="h-8 w-8 p-0" disabled={isLoading}>
                         <span className="sr-only">Open menu</span>
                         <MoreHorizontal className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                      <DropdownMenuItem onClick={() => openEditDialog(kasir)}>
+                      <DropdownMenuItem onClick={() => openEditDialog(kasir)} disabled={isLoading}>
                         <Edit3 className="mr-2 h-4 w-4" /> Edit Details
                       </DropdownMenuItem>
-                       <DropdownMenuItem onClick={() => handleChangePassword(kasir)}>
+                       <DropdownMenuItem onClick={() => handleChangePassword(kasir)} disabled={isLoading}>
                         <KeyRound className="mr-2 h-4 w-4" /> Change Password
                       </DropdownMenuItem>
                       <DropdownMenuSeparator/>
-                      <DropdownMenuItem onClick={() => handleDeleteKasir(kasir)} className="text-destructive focus:text-destructive focus:bg-destructive/10">
-                        <Trash2 className="mr-2 h-4 w-4" /> Delete Kasir
+                      <DropdownMenuItem onClick={() => handleDeleteKasir(kasir)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={isLoading}>
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete Kasir Data
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>
               </TableRow>
             ))}
-             {kasirs.length === 0 && (
+             {kasirs.length === 0 && !isLoading && (
               <TableRow>
                 <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
                   No kasirs found. Start by adding a new kasir.
@@ -195,14 +357,13 @@ export function KasirTable() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action will permanently delete the kasir account for 
-              <span className="font-semibold"> {kasirToDelete?.name}</span>. This cannot be undone.
+              This action will delete the kasir data for <span className="font-semibold">{kasirToDelete?.name}</span> from Firestore. Their authentication account might still exist. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setShowDeleteConfirm(false)}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={confirmDelete} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground">
-              Delete Kasir
+              Delete Kasir Data
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -211,11 +372,16 @@ export function KasirTable() {
       {isFormOpen && (
         <KasirFormDialog
           kasir={editingKasir}
-          allOutlets={mockAllOutlets}
+          allOutlets={allOutlets}
           onSave={handleSaveKasir}
-          triggerButton={<div style={{display: 'none'}}/>} // Hidden trigger, dialog controlled by isFormOpen
+          triggerButton={<div style={{display: 'none'}}/>}
+          // isOpenProp and onOpenChangeProp can be used if strict external control is needed,
+          // but for now, the KasirFormDialog manages its own open state internally via its trigger
+          // and the setIsFormOpen state here.
         />
       )}
     </>
   );
 }
+
+    
