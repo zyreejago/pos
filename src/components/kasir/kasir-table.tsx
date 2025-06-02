@@ -98,7 +98,7 @@ export function KasirTable() {
         orderBy("name", "asc")
       );
       const kasirsSnapshot = await getDocs(kasirsQuery);
-      const fetchedKasirs: User[] = kasirsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+      const fetchedKasirs: User[] = kasirsSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as User));
       setKasirs(fetchedKasirs);
 
       // Fetch Outlets
@@ -108,7 +108,7 @@ export function KasirTable() {
         orderBy("name", "asc")
       );
       const outletsSnapshot = await getDocs(outletsQuery);
-      const fetchedOutlets: Outlet[] = outletsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Outlet));
+      const fetchedOutlets: Outlet[] = outletsSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as Outlet));
       setAllOutlets(fetchedOutlets);
 
     } catch (error: any) {
@@ -143,9 +143,13 @@ export function KasirTable() {
         const kasirRef = doc(db, "users", kasirIdToUpdate);
         const updateData: Partial<User> = {
           name: data.name,
-          // email: data.email, // Email change for existing user is complex
           outlets: data.outlets,
         };
+        // Password update for existing user is complex and should be handled securely,
+        // e.g., via admin console or dedicated reset flow. Not directly setting password here for edits.
+        if (data.password && data.password.length >= 6) {
+            toast({ title: "Password Change Info", description: "To change an existing Kasir's password, please use Firebase Console or a dedicated password reset flow.", variant: "default", duration: 7000});
+        }
         await updateDoc(kasirRef, updateData);
         toast({ title: "Kasir Updated", description: `Kasir ${data.name} has been updated.` });
       } else { 
@@ -154,35 +158,57 @@ export function KasirTable() {
           setIsLoading(false);
           return;
         }
+        // Create user in Firebase Authentication
         const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
         const firebaseUser = userCredential.user;
         await updateAuthProfile(firebaseUser, { displayName: data.name });
 
+        // Prepare Kasir document for Firestore
         const newKasirDoc: User = {
           id: firebaseUser.uid,
           name: data.name,
           email: data.email,
           role: 'kasir',
-          status: 'active',
+          status: 'active', // Kasirs added by admin are active by default
           merchantId: currentUser.merchantId,
           outlets: data.outlets,
           createdAt: serverTimestamp(),
         };
         await setDoc(doc(db, "users", firebaseUser.uid), newKasirDoc);
-        toast({ title: "Kasir Added", description: `Kasir ${data.name} has been added.` });
+        toast({ title: "Kasir Added", description: `Kasir ${data.name} (${data.email}) has been added.` });
       }
       fetchKasirsAndOutlets(); 
       setEditingKasir(undefined);
       setIsFormOpen(false); // Close form on success
     } catch (error: any) {
       console.error("Error saving kasir: ", error);
-      let errMsg = `Could not save kasir: ${error.message}.`;
-      if (error.code === 'auth/email-already-in-use') {
-        errMsg = "This email is already registered in Firebase Authentication.";
-      } else if (error.code === 'auth/weak-password') {
-        errMsg = "The password is too weak.";
+      let title = "Save Failed";
+      let description = `Could not save kasir.`;
+
+      if (error.name === 'FirebaseError') { // Firebase errors often have a .code
+        switch (error.code) {
+          case 'auth/email-already-in-use':
+            description = `This email (${data.email}) is already registered for authentication.`;
+            break;
+          case 'auth/weak-password':
+            description = "The password is too weak. Please choose a stronger one.";
+            break;
+          case 'auth/operation-not-allowed':
+            title = "Auth Operation Not Allowed";
+            description = "The current user is not permitted to create new authentication accounts. This might require specific Firebase project settings or to be performed by a superadmin.";
+            break;
+          case 'permission-denied': // This could be from Firestore or other Firebase services
+          case 'FIRESTORE_PERMISSION_DENIED': // More specific Firestore code sometimes
+            title = "Permission Denied";
+            description = `The operation was denied by Firebase. This is likely due to Firestore security rules not allowing this action for user ${currentUser.email}. Details: ${error.message}`;
+            break;
+          default:
+            description = `An error occurred: ${error.message} (Code: ${error.code})`;
+        }
+      } else {
+        description = `An unexpected error occurred: ${error.message || error.toString()}`;
       }
-      toast({ title: "Save Failed", description: errMsg, variant: "destructive" });
+      toast({ title, description, variant: "destructive", duration: 9000 });
     }
     setIsLoading(false);
   };
@@ -206,12 +232,17 @@ export function KasirTable() {
     if (kasirToDelete) {
       setIsLoading(true);
       try {
+        // Deleting the Firestore document. Auth account deletion is separate.
         await deleteDoc(doc(db, "users", kasirToDelete.id));
         toast({ title: "Kasir Data Deleted", description: `Kasir ${kasirToDelete.name}'s data has been removed from Firestore. Their authentication account may still exist.`, variant: "default" });
         fetchKasirsAndOutlets();
       } catch (error: any) {
         console.error("Error deleting kasir data: ", error);
-        toast({ title: "Delete Failed", description: `Could not delete kasir data: ${error.message}`, variant: "destructive" });
+        let errMsg = `Could not delete kasir data: ${error.message}`;
+        if (error.code === 'permission-denied') {
+            errMsg = `Permission denied when trying to delete kasir data. Check Firestore rules.`;
+        }
+        toast({ title: "Delete Failed", description: errMsg, variant: "destructive" });
       }
       setIsLoading(false);
     }
@@ -220,7 +251,11 @@ export function KasirTable() {
   };
 
   const handleChangePassword = (kasir: User) => {
-    toast({ title: "Password Management", description: `Password changes for ${kasir.name} should be handled securely.` });
+    toast({ 
+        title: "Password Management", 
+        description: `Password changes for ${kasir.name} should ideally be done by the kasir via a 'Forgot Password' flow, or by a superadmin in the Firebase Console for security.`,
+        duration: 8000 
+    });
   };
 
   if (!isClient) {
@@ -374,3 +409,6 @@ export function KasirTable() {
     </>
   );
 }
+
+
+    
