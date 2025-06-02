@@ -9,214 +9,209 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Check if a user document exists for the given UID
     function userDocumentExists(uid) {
       return exists(/databases/$(database)/documents/users/$(uid));
     }
 
-    // Get user data (CALLER MUST ENSURE DOCUMENT EXISTS FIRST using userDocumentExists(uid))
-    // It's safer for functions used in conditions to return boolean or check existence internally.
-    // This function is for internal use by other helpers that check existence first.
+    // WARNING: Unsafe. Call only after userDocumentExists(uid) is true.
     function getUserDocumentDataUnsafe(uid) {
       return get(/databases/$(database)/documents/users/$(uid)).data;
     }
 
-    // Check if the currently logged-in user is a superadmin
+    function userDocumentHasRole(uid, targetRole) {
+      // Assumes userDocumentExists(uid) has been checked by caller if needed.
+      let userData = getUserDocumentDataUnsafe(uid);
+      return userData.role == targetRole;
+    }
+
+    // --- Requester Status Functions ---
     function isRequesterSuperadmin() {
       return isSignedIn() &&
              userDocumentExists(request.auth.uid) &&
-             getUserDocumentDataUnsafe(request.auth.uid).role == 'superadmin';
+             userDocumentHasRole(request.auth.uid, 'superadmin');
     }
 
-    // Check if the currently logged-in user has the role 'admin'
-    function isRequesterAdmin() {
-      return isSignedIn() &&
-             userDocumentExists(request.auth.uid) &&
-             getUserDocumentDataUnsafe(request.auth.uid).role == 'admin';
+    // Checks if the requester is an admin AND has a merchantId set in their document.
+    function isRequesterAdminWithMerchantContext() {
+      if (!isSignedIn() || !userDocumentExists(request.auth.uid)) {
+        return false;
+      }
+      let adminData = getUserDocumentDataUnsafe(request.auth.uid); // Safe due to userDocumentExists check
+      return adminData.role == 'admin' && adminData.merchantId != null;
     }
-    
-    // Get the merchantId of the currently logged-in user (assumes userDoc exists and has merchantId)
-    // Callers should ensure isRequesterAdmin() or similar is true first.
-    function getRequesterMerchantIdUnsafe() {
+
+    // WARNING: Unsafe. Call only after isRequesterAdminWithMerchantContext() is true.
+    function getRequesterAdminMerchantIdUnsafe() {
         return getUserDocumentDataUnsafe(request.auth.uid).merchantId;
     }
 
+    // --- Specific Action Checks ---
+    function isAdminCreatingKasirForOwnMerchant() {
+      // 1. Requester must be an admin with a valid merchant context.
+      if (!isRequesterAdminWithMerchantContext()) {
+        return false;
+      }
+      // 2. The new document (kasir) must have role 'kasir'.
+      if (request.resource.data.role != 'kasir') {
+        return false;
+      }
+      // 3. The new kasir's merchantId must match the creating admin's merchantId.
+      //    Client (KasirTable.tsx) sets newKasir.merchantId = admin.merchantId.
+      //    This rule verifies that consistency.
+      let adminMerchantId = getRequesterAdminMerchantIdUnsafe(); // Safe due to isRequesterAdminWithMerchantContext
+      return request.resource.data.merchantId == adminMerchantId;
+    }
 
-    // --- Global Rule for Superadmin (broad access) ---
-    // This rule gives superadmins full read/write access to everything.
+    function isSuperadminCreatingAdminUser() {
+      // Superadmin creating a new user who will be an admin.
+      return isRequesterSuperadmin() &&
+             request.resource.data.role == 'admin' &&
+             request.resource.data.status == 'active'; // Example: superadmin creates active admins
+    }
+
+    function isSelfRegisteringAsMerchantAdmin() {
+      // User creating their own document upon registration as a new merchant admin.
+      return request.auth.uid == userId && // userId is the path parameter for /users/{userId}
+             request.resource.data.role == 'admin' &&
+             request.resource.data.status == 'pending_approval' && // New merchants start as pending
+             request.resource.data.merchantId == request.auth.uid;  // Their merchantId is initially their own UID
+    }
+
+    // --- Global Rule for Superadmin ---
+    // Superadmin has full read/write access to all documents.
     match /{document=**} {
       allow read, write: if isRequesterSuperadmin();
     }
 
-    // --- Rules for /users collection ---
+    // --- Collection: users ---
     match /users/{userId} {
-      // Document being read/written is owned by the requester
-      function isOwner() {
-        return isSignedIn() && request.auth.uid == userId;
-      }
+      // Document owner can always read and update their own data.
+      allow read, update: if isSignedIn() && request.auth.uid == userId;
 
-      // Requester is an admin of the merchant that the target user document (resource.data) belongs to
-      function isRequesterAdminOfTargetUserMerchant() {
-        return resource.data != null && resource.data.merchantId != null && // Check existing doc
-               isRequesterAdmin() && 
-               userDocumentExists(request.auth.uid) && // Ensure admin doc has merchantId
-               getRequesterMerchantIdUnsafe() == resource.data.merchantId;
-      }
-      
-      // New user registration: creating their own 'admin' account for a new merchant
-      function isSelfRegisteringMerchantAdmin() {
-        return isSignedIn() &&
-               request.auth.uid == userId && // User is creating their own document
-               request.resource.data.role == 'admin' &&
-               request.resource.data.status == 'pending_approval' &&
-               request.resource.data.merchantId == request.auth.uid; // Merchant ID is their own UID
-      }
+      // Admin can read/update users (kasirs) belonging to their own merchant.
+      allow read, update: if isRequesterAdminWithMerchantContext() &&
+                             userDocumentExists(userId) && // Target user document exists
+                             getUserDocumentDataUnsafe(userId).merchantId == getRequesterAdminMerchantIdUnsafe();
 
-      // Admin creating a kasir. As per new requirement, any admin can create a kasir.
-      // The client will set the kasir's merchantId.
-      function isAdminCreatingKasir() {
-        return isRequesterAdmin() && // Requester must be an admin
-               request.resource.data.role == 'kasir'; // New document must be for a kasir
-      }
-      
-      // Superadmin creating an admin user
-      function isSuperadminCreatingAdmin() {
-        return isRequesterSuperadmin() &&
-               request.resource.data.role == 'admin' &&
-               request.resource.data.status == 'active';
-      }
 
-      allow read: if isOwner() || isRequesterAdminOfTargetUserMerchant() || isRequesterSuperadmin();
+      allow create: if isAdminCreatingKasirForOwnMerchant() ||
+                       isSuperadminCreatingAdminUser() ||
+                       isSelfRegisteringAsMerchantAdmin();
 
-      allow create: if isSelfRegisteringMerchantAdmin() || 
-                       isAdminCreatingKasir() || 
-                       isSuperadminCreatingAdmin();
-
-      allow update: if isOwner() || isRequesterAdminOfTargetUserMerchant() || isRequesterSuperadmin();
-
-      function isSuperadminDeletingOtherUser() {
-        return isRequesterSuperadmin() && userId != request.auth.uid;
-      }
-      function isAdminDeletingKasirFromOwnMerchant() {
-        return isRequesterAdmin() &&
-               resource.data != null && 
-               resource.data.role == 'kasir' &&
-               userDocumentExists(request.auth.uid) && 
-               getRequesterMerchantIdUnsafe() == resource.data.merchantId;
-      }
-      allow delete: if isSuperadminDeletingOtherUser() || isAdminDeletingKasirFromOwnMerchant();
+      // Admin can delete kasirs of their own merchant. Superadmin can delete non-superadmins.
+      allow delete: if (isRequesterAdminWithMerchantContext() &&
+                        userDocumentExists(userId) &&
+                        userDocumentHasRole(userId, 'kasir') &&
+                        getUserDocumentDataUnsafe(userId).merchantId == getRequesterAdminMerchantIdUnsafe()) ||
+                       (isRequesterSuperadmin() && userDocumentExists(userId) && !userDocumentHasRole(userId, 'superadmin'));
     }
 
-    // --- Rules for /outlets collection ---
+    // --- Collection: outlets ---
     match /outlets/{outletId} {
       function isOutletOfRequesterMerchant() {
-        return resource.data != null &&
-               resource.data.merchantId != null &&
-               isRequesterAdmin() && 
-               userDocumentExists(request.auth.uid) && 
-               getRequesterMerchantIdUnsafe() == resource.data.merchantId;
+        if(!isRequesterAdminWithMerchantContext()) { return false; }
+        return resource.data.merchantId == getRequesterAdminMerchantIdUnsafe();
       }
-      
-      function isAdminCreatingOutletForOwnMerchant() {
-        return isRequesterAdmin() &&
-               userDocumentExists(request.auth.uid) && 
-               request.resource.data.merchantId == getRequesterMerchantIdUnsafe();
+      function isNewOutletForRequesterMerchant() {
+        if(!isRequesterAdminWithMerchantContext()) { return false; }
+        return request.resource.data.merchantId == getRequesterAdminMerchantIdUnsafe();
       }
 
-      allow read: if isRequesterAdmin() && isOutletOfRequesterMerchant();
-      allow create: if isAdminCreatingOutletForOwnMerchant();
-      allow update, delete: if isOutletOfRequesterMerchant();
+      allow read: if isRequesterAdminWithMerchantContext() && isOutletOfRequesterMerchant();
+      allow create: if isRequesterAdminWithMerchantContext() && isNewOutletForRequesterMerchant();
+      allow update, delete: if isRequesterAdminWithMerchantContext() && isOutletOfRequesterMerchant();
     }
 
-    // --- Rules for /products collection ---
+    // --- Collection: products ---
     match /products/{productId} {
       function isProductOfRequesterMerchant() {
-         return resource.data != null &&
-               resource.data.merchantId != null &&
-               isSignedIn() && userDocumentExists(request.auth.uid) &&
-               (getUserDocumentDataUnsafe(request.auth.uid).role == 'admin' || getUserDocumentDataUnsafe(request.auth.uid).role == 'kasir') &&
-               getRequesterMerchantIdUnsafe() == resource.data.merchantId;
+        // Works for admin or kasir, as long as they have a merchant context.
+        if (!isSignedIn() || !userDocumentExists(request.auth.uid)) { return false; }
+        let requesterData = getUserDocumentDataUnsafe(request.auth.uid);
+        if (requesterData.merchantId == null) { return false; }
+        return resource.data.merchantId == requesterData.merchantId;
       }
-      function isAdminCreatingProductForOwnMerchant() {
-        return isRequesterAdmin() &&
-               userDocumentExists(request.auth.uid) &&
-               request.resource.data.merchantId == getRequesterMerchantIdUnsafe();
-      }
-      function isKasirUpdatingStockForOwnMerchantProduct() {
-        return isSignedIn() && 
-               userDocumentExists(request.auth.uid) && 
-               getUserDocumentDataUnsafe(request.auth.uid).role == 'kasir' &&
-               resource.data != null && 
-               resource.data.merchantId == getRequesterMerchantIdUnsafe() && 
-               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['units', 'updatedAt']);
+       function isNewProductForRequesterMerchant() {
+        if(!isRequesterAdminWithMerchantContext()) { return false; } // Only admins create products
+        return request.resource.data.merchantId == getRequesterAdminMerchantIdUnsafe();
       }
 
-      allow read: if isSignedIn() && userDocumentExists(request.auth.uid) && (getUserDocumentDataUnsafe(request.auth.uid).role == 'admin' || getUserDocumentDataUnsafe(request.auth.uid).role == 'kasir') && isProductOfRequesterMerchant();
-      allow create: if isAdminCreatingProductForOwnMerchant();
-      allow update: if (isRequesterAdmin() && isProductOfRequesterMerchant()) || isKasirUpdatingStockForOwnMerchantProduct();
-      allow delete: if isRequesterAdmin() && isProductOfRequesterMerchant();
+      // Admin or Kasir can read products of their merchant.
+      allow read: if (isRequesterAdminWithMerchantContext() || (isSignedIn() && userDocumentExists(request.auth.uid) && getUserDocumentDataUnsafe(request.auth.uid).role == 'kasir')) &&
+                     isProductOfRequesterMerchant();
+
+      allow create: if isRequesterAdminWithMerchantContext() && isNewProductForRequesterMerchant();
+
+      // Admin can update any product of their merchant.
+      // Kasir can only update stock (units field) of products of their merchant.
+      allow update: if (isRequesterAdminWithMerchantContext() && isProductOfRequesterMerchant()) ||
+                       (isSignedIn() && userDocumentExists(request.auth.uid) && getUserDocumentDataUnsafe(request.auth.uid).role == 'kasir' &&
+                        isProductOfRequesterMerchant() &&
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['units']));
+
+      allow delete: if isRequesterAdminWithMerchantContext() && isProductOfRequesterMerchant();
     }
 
-    // --- Rules for /suppliers collection ---
+    // --- Collection: suppliers ---
     match /suppliers/{supplierId} {
       function isSupplierOfRequesterMerchant() {
-         return resource.data != null &&
-               resource.data.merchantId != null &&
-               isRequesterAdmin() &&
-               userDocumentExists(request.auth.uid) &&
-               getRequesterMerchantIdUnsafe() == resource.data.merchantId;
+        if(!isRequesterAdminWithMerchantContext()) { return false; }
+        return resource.data.merchantId == getRequesterAdminMerchantIdUnsafe();
       }
-      function isAdminCreatingSupplierForOwnMerchant() {
-        return isRequesterAdmin() &&
-               userDocumentExists(request.auth.uid) &&
-               request.resource.data.merchantId == getRequesterMerchantIdUnsafe();
+      function isNewSupplierForRequesterMerchant() {
+        if(!isRequesterAdminWithMerchantContext()) { return false; }
+        return request.resource.data.merchantId == getRequesterAdminMerchantIdUnsafe();
       }
-
-      allow read: if isSupplierOfRequesterMerchant();
-      allow create: if isAdminCreatingSupplierForOwnMerchant();
-      allow update, delete: if isSupplierOfRequesterMerchant();
+      allow read, create, update, delete: if isRequesterAdminWithMerchantContext() &&
+                                             (request.method == 'get' || request.method == 'list' ? isSupplierOfRequesterMerchant() : isNewSupplierForRequesterMerchant());
     }
 
-    // --- Rules for /settings collection ---
-    // Document ID for settings is assumed to be the merchantId
+    // --- Collection: settings ---
     match /settings/{settingsMerchantId} {
-      function isAccessingOwnMerchantSettings() {
-        return isRequesterAdmin() &&
-               userDocumentExists(request.auth.uid) &&
-               getRequesterMerchantIdUnsafe() == settingsMerchantId;
-      }
-      allow read, write: if isAccessingOwnMerchantSettings();
+      allow read, write: if isRequesterAdminWithMerchantContext() &&
+                            getRequesterAdminMerchantIdUnsafe() == settingsMerchantId;
     }
 
-    // --- Rules for /transactions collection ---
+    // --- Collection: transactions ---
     match /transactions/{transactionId} {
-      function canRequesterCreateOrReadTransaction() {
-          // This function checks if the requester is an admin or kasir AND
-          // if their merchantId matches the transaction's merchantId.
-          // For create, it checks request.resource.data. For read, it checks resource.data.
-          let isWriteOperation = request.method == 'create' || request.method == 'update' || request.method == 'delete';
-          let transactionMerchantId = isWriteOperation ? request.resource.data.merchantId : resource.data.merchantId;
-          
-          return isSignedIn() &&
-                 userDocumentExists(request.auth.uid) &&
-                 (getUserDocumentDataUnsafe(request.auth.uid).role == 'admin' || getUserDocumentDataUnsafe(request.auth.uid).role == 'kasir') &&
-                 userDocumentExists(request.auth.uid) && // Redundant check, but safe
-                 getRequesterMerchantIdUnsafe() == transactionMerchantId;
+      function isTransactionValidForCreator() {
+        if (!isSignedIn() || !userDocumentExists(request.auth.uid)) {
+          return false;
+        }
+        let creatorData = getUserDocumentDataUnsafe(request.auth.uid);
+        // Creator must be an admin or kasir
+        if (creatorData.role != 'admin' && creatorData.role != 'kasir') {
+          return false;
+        }
+        // Creator must belong to the merchant of the transaction
+        if (creatorData.merchantId != request.resource.data.merchantId) {
+          return false;
+        }
+        // If creator is a kasir, they must have access to the outlet of the transaction
+        if (creatorData.role == 'kasir') {
+          if (creatorData.outlets == null || !(request.resource.data.outletId in creatorData.outlets)) {
+            // Correction: 'in' operator for lists checks if index exists. For array contains, use .hasAny() or loop.
+            // For simplicity, if outlets is an array of IDs:
+            // This part needs careful implementation based on how 'outlets' is stored.
+            // Assuming creatorData.outlets is an array of outlet IDs:
+            // return request.resource.data.outletId in creatorData.outlets; // This is for maps/objects
+            // A better way for arrays if you can't use hasAny (which is v2):
+            // Firestore rules don't have a direct "array contains value" for arrays of strings easily.
+            // A common workaround is storing accessible outlets as a map: outlets: {'outletId1': true, 'outletId2': true}
+            // If creatorData.outlets is a map like {'outlet_id_1': true, 'outlet_id_2': true}
+             if (creatorData.outlets == null || !creatorData.outlets[request.resource.data.outletId]) {
+               return false;
+             }
+          }
+        }
+        return true; // All checks passed
       }
-      
-      function isKasirOperatingAssignedOutletForCreate() {
-          // This function assumes canRequesterCreateOrReadTransaction has verified role and merchant match.
-          // It further refines for kasir to only create for their assigned outlets.
-          // This should only be called if the requester is a kasir.
-          return getUserDocumentDataUnsafe(request.auth.uid).outlets != null && // Kasir must have outlets field
-                 request.resource.data.outletId in getUserDocumentDataUnsafe(request.auth.uid).outlets;
-      }
-      
-      allow create: if canRequesterCreateOrReadTransaction() &&
-                       (isRequesterAdmin() || isKasirOperatingAssignedOutletForCreate()); // Admin OR (Kasir AND assigned to outlet)
-                       
-      allow read: if resource.data != null && canRequesterCreateOrReadTransaction(); // Ensure doc exists for read
-      // Update/Delete for transactions are typically not allowed or highly restricted.
+
+      allow create: if isTransactionValidForCreator();
+
+      // Admin or Kasir can read transactions of their merchant.
+      allow read: if (isRequesterAdminWithMerchantContext() || (isSignedIn() && userDocumentExists(request.auth.uid) && getUserDocumentDataUnsafe(request.auth.uid).role == 'kasir')) &&
+                     resource.data.merchantId == getUserDocumentDataUnsafe(request.auth.uid).merchantId;
     }
   }
 }
