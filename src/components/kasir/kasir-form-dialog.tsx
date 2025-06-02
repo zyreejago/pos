@@ -1,7 +1,7 @@
 
 "use client";
 
-import * as React from "react"; // Import React
+import * as React from "react"; 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -13,7 +13,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
+  DialogTrigger, 
 } from "@/components/ui/dialog";
 import {
   Form,
@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { User, Outlet } from "@/types"; // User type should be generic enough
+import type { User, Outlet } from "@/types"; 
 import { PlusCircle, User as UserIcon, Mail, Lock, Store, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -36,7 +36,6 @@ const kasirFormSchemaBase = z.object({
   outlets: z.array(z.string()).min(1, { message: "You have to select at least one outlet." }),
 });
 
-// Schema for adding a new kasir (password is required)
 const addKasirFormSchema = kasirFormSchemaBase.extend({
   password: z.string().min(6, { message: "Password must be at least 6 characters." }),
   confirmPassword: z.string().min(6, { message: "Confirm password must be at least 6 characters." }),
@@ -45,12 +44,11 @@ const addKasirFormSchema = kasirFormSchemaBase.extend({
   path: ["confirmPassword"],
 });
 
-// Schema for editing an existing kasir (password is optional)
 const editKasirFormSchema = kasirFormSchemaBase.extend({
   password: z.string().min(6, { message: "Password must be at least 6 characters." }).optional().or(z.literal('')),
   confirmPassword: z.string().min(6, { message: "Confirm password must be at least 6 characters." }).optional().or(z.literal('')),
 }).refine(data => {
-    if (data.password && data.password.length > 0) { // Only validate confirmPassword if new password is entered
+    if (data.password && data.password.length > 0) { 
         return data.password === data.confirmPassword;
     }
     return true;
@@ -59,27 +57,30 @@ const editKasirFormSchema = kasirFormSchemaBase.extend({
   path: ["confirmPassword"],
 });
 
-
-// Type for form values, ensuring password/confirmPassword are string | undefined
 type KasirFormValues = z.infer<typeof kasirFormSchemaBase> & {
   password?: string;
   confirmPassword?: string;
 };
 
-
 interface KasirFormDialogProps {
   kasir?: User;
   allOutlets: Outlet[];
   onSave: (data: KasirFormValues, kasirId?: string) => Promise<void>;
-  triggerButton?: React.ReactNode;
-  // Add isOpenProp and onOpenChangeProp if you want to control dialog externally
-  // isOpenProp?: boolean;
-  // onOpenChangeProp?: (open: boolean) => void;
+  triggerButton?: React.ReactNode; 
+  isOpenProp?: boolean;          
+  onOpenChangeProp?: (open: boolean) => void; 
 }
 
-export function KasirFormDialog({ kasir, allOutlets, onSave, triggerButton }: KasirFormDialogProps) {
-  const [isOpen, setIsOpen] = useState(false);
+export function KasirFormDialog({ 
+    kasir, 
+    allOutlets, 
+    onSave, 
+    triggerButton, 
+    isOpenProp, 
+    onOpenChangeProp 
+}: KasirFormDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const [internalIsOpen, setInternalIsOpen] = useState(false); // For self-triggering mode
 
   const currentFormSchema = kasir ? editKasirFormSchema : addKasirFormSchema;
 
@@ -90,18 +91,21 @@ export function KasirFormDialog({ kasir, allOutlets, onSave, triggerButton }: Ka
       : { name: "", email: "", password: "", confirmPassword: "", outlets: [] },
   });
 
+  // Determine effective open state and handler
+  const effectiveIsOpen = isOpenProp !== undefined ? isOpenProp : internalIsOpen;
+  const effectiveOnOpenChange = isOpenProp !== undefined ? onOpenChangeProp : setInternalIsOpen;
+
   useEffect(() => {
-    if (isOpen) {
+    if (effectiveIsOpen) {
       form.reset(kasir
         ? { name: kasir.name, email: kasir.email, outlets: kasir.outlets || [], password: '', confirmPassword: '' }
         : { name: "", email: "", password: "", confirmPassword: "", outlets: [] }
       );
     }
-  }, [isOpen, kasir, form]);
+  }, [effectiveIsOpen, kasir, form]);
 
   const onSubmit = async (data: KasirFormValues) => {
     setIsLoading(true);
-    // Password for existing kasir if not entered should be undefined, not empty string
     const submissionData = {
         ...data,
         password: data.password && data.password.length > 0 ? data.password : undefined,
@@ -109,34 +113,31 @@ export function KasirFormDialog({ kasir, allOutlets, onSave, triggerButton }: Ka
     };
     await onSave(submissionData, kasir?.id);
     setIsLoading(false);
-    if (!form.formState.isSubmitSuccessful && form.formState.isValid) {
-        // If save failed but form is valid, keep dialog open for user to see error (toast should handle error)
-    } else if (form.formState.isSubmitSuccessful && form.formState.isValid) {
-        setIsOpen(false); // Close dialog on successful save
+    if (form.formState.isSubmitSuccessful && form.formState.isValid && effectiveOnOpenChange) {
+        effectiveOnOpenChange(false); 
     }
   };
   
-  const handleDialogTriggerClick = () => {
+  const handleDialogTriggerClick = () => { // For self-triggering mode's default button
     if (allOutlets.length === 0 && !kasir) {
-        // Prevent opening "Add Kasir" dialog if no outlets exist
-        // A toast is better handled by the parent component (KasirTable) when it tries to enable/disable the button
         return;
     }
-    setIsOpen(true);
+    if (effectiveOnOpenChange) effectiveOnOpenChange(true);
   };
 
-
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!isLoading) setIsOpen(open); }}>
-      <DialogTrigger asChild>
-        {triggerButton ? (
-            React.cloneElement(triggerButton as React.ReactElement<any>, { onClick: handleDialogTriggerClick })
-        ) : (
-          <Button onClick={handleDialogTriggerClick} disabled={allOutlets.length === 0 && !kasir}>
-            <PlusCircle className="mr-2 h-4 w-4" /> Add Kasir
-          </Button>
-        )}
-      </DialogTrigger>
+    <Dialog open={effectiveIsOpen} onOpenChange={effectiveOnOpenChange}>
+      {isOpenProp === undefined && ( // Only render DialogTrigger if NOT externally controlled
+        <DialogTrigger asChild>
+          {triggerButton ? (
+              React.cloneElement(triggerButton as React.ReactElement<any>, { onClick: () => effectiveOnOpenChange && effectiveOnOpenChange(true) })
+          ) : (
+            <Button onClick={handleDialogTriggerClick} disabled={allOutlets.length === 0 && !kasir}>
+              <PlusCircle className="mr-2 h-4 w-4" /> Add Kasir
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="font-headline text-2xl">{kasir ? "Edit Kasir" : "Add New Kasir"}</DialogTitle>
@@ -168,7 +169,7 @@ export function KasirFormDialog({ kasir, allOutlets, onSave, triggerButton }: Ka
                   <FormLabel>Email Address</FormLabel>
                    <div className="relative">
                     <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <FormControl><Input type="email" placeholder="kasir@example.com" {...field} className="pl-10" disabled={!!kasir} /></FormControl> {/* Email usually not editable for existing user */}
+                    <FormControl><Input type="email" placeholder="kasir@example.com" {...field} className="pl-10" disabled={!!kasir} /></FormControl>
                   </div>
                    {kasir && <p className="text-xs text-muted-foreground pt-1">Email cannot be changed for existing kasirs here.</p>}
                   <FormMessage />
@@ -260,7 +261,7 @@ export function KasirFormDialog({ kasir, allOutlets, onSave, triggerButton }: Ka
               )}
             />
             <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={() => setIsOpen(false)} disabled={isLoading}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => effectiveOnOpenChange && effectiveOnOpenChange(false)} disabled={isLoading}>Cancel</Button>
               <Button type="submit" disabled={isLoading || (allOutlets.length === 0 && !kasir) }>
                 {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{kasir ? "Saving..." : "Adding..."}</> : (kasir ? "Save Changes" : "Add Kasir")}
               </Button>
@@ -271,5 +272,3 @@ export function KasirFormDialog({ kasir, allOutlets, onSave, triggerButton }: Ka
     </Dialog>
   );
 }
-
-    

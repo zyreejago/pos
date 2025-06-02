@@ -139,31 +139,25 @@ export function KasirTable() {
 
     setIsLoading(true);
     try {
-      if (kasirIdToUpdate) { // Editing existing kasir
+      if (kasirIdToUpdate) { 
         const kasirRef = doc(db, "users", kasirIdToUpdate);
         const updateData: Partial<User> = {
           name: data.name,
-          email: data.email, // Note: Changing email in Firestore doesn't change Firebase Auth email.
+          // email: data.email, // Email change for existing user is complex
           outlets: data.outlets,
-          // Password changes for existing users are complex and ideally handled via Firebase Admin SDK or separate flows.
-          // Here, we're only updating Firestore data.
         };
         await updateDoc(kasirRef, updateData);
         toast({ title: "Kasir Updated", description: `Kasir ${data.name} has been updated.` });
-      } else { // Adding new kasir
+      } else { 
         if (!data.password) {
           toast({ title: "Error", description: "Password is required for new kasir.", variant: "destructive" });
           setIsLoading(false);
           return;
         }
-        // 1. Create user in Firebase Auth
         const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
         const firebaseUser = userCredential.user;
-
-        // 2. Update Firebase Auth profile (optional)
         await updateAuthProfile(firebaseUser, { displayName: data.name });
 
-        // 3. Save user data to Firestore
         const newKasirDoc: User = {
           id: firebaseUser.uid,
           name: data.name,
@@ -177,9 +171,9 @@ export function KasirTable() {
         await setDoc(doc(db, "users", firebaseUser.uid), newKasirDoc);
         toast({ title: "Kasir Added", description: `Kasir ${data.name} has been added.` });
       }
-      fetchKasirsAndOutlets(); // Refresh list
+      fetchKasirsAndOutlets(); 
       setEditingKasir(undefined);
-      setIsFormOpen(false);
+      setIsFormOpen(false); // Close form on success
     } catch (error: any) {
       console.error("Error saving kasir: ", error);
       let errMsg = `Could not save kasir: ${error.message}.`;
@@ -212,7 +206,6 @@ export function KasirTable() {
     if (kasirToDelete) {
       setIsLoading(true);
       try {
-        // Deleting Firestore document. Auth user deletion is more complex.
         await deleteDoc(doc(db, "users", kasirToDelete.id));
         toast({ title: "Kasir Data Deleted", description: `Kasir ${kasirToDelete.name}'s data has been removed from Firestore. Their authentication account may still exist.`, variant: "default" });
         fetchKasirsAndOutlets();
@@ -227,7 +220,7 @@ export function KasirTable() {
   };
 
   const handleChangePassword = (kasir: User) => {
-    toast({ title: "Password Management", description: `Password changes for ${kasir.name} should be handled securely (e.g., Firebase Console, admin SDK, or user-initiated reset).` });
+    toast({ title: "Password Management", description: `Password changes for ${kasir.name} should be handled securely.` });
   };
 
   if (!isClient) {
@@ -374,14 +367,10 @@ export function KasirTable() {
           kasir={editingKasir}
           allOutlets={allOutlets}
           onSave={handleSaveKasir}
-          triggerButton={<div style={{display: 'none'}}/>}
-          // isOpenProp and onOpenChangeProp can be used if strict external control is needed,
-          // but for now, the KasirFormDialog manages its own open state internally via its trigger
-          // and the setIsFormOpen state here.
+          isOpenProp={isFormOpen} // Pass state to control dialog
+          onOpenChangeProp={setIsFormOpen} // Pass setter to allow dialog to close itself
         />
       )}
     </>
   );
 }
-
-    
