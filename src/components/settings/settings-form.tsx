@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { SystemSettings, User } from "@/types";
+import type { SystemSettings } from "@/types"; // User type not directly used here anymore
 import { Percent, Tag, Loader2 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -38,7 +38,7 @@ interface StoredUser {
   merchantId?: string;
 }
 
-const getCurrentUser = (): StoredUser | null => {
+const readCurrentUserFromStorage = (): StoredUser | null => {
   if (typeof window !== 'undefined') {
     const storedUserStr = localStorage.getItem('mockUser');
     if (storedUserStr) {
@@ -61,19 +61,28 @@ const defaultSettings: SettingsFormValues = {
 export function SettingsForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [isFetching, setIsFetching] = useState(true);
+  const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
+  const [isUserLoaded, setIsUserLoaded] = useState(false);
   const { toast } = useToast();
-  const currentUser = getCurrentUser();
+
+  useEffect(() => {
+    const user = readCurrentUserFromStorage();
+    setCurrentUser(user);
+    setIsUserLoaded(true);
+  }, []); // Runs once on mount to load user from storage
 
   const form = useForm<SettingsFormValues>({
     resolver: zodResolver(settingsFormSchema),
-    defaultValues: defaultSettings, // Initialize with defaults
+    defaultValues: defaultSettings,
   });
 
   const fetchSettings = useCallback(async () => {
+    if (!isUserLoaded) return; // Don't fetch if user hasn't been loaded from storage yet
+
     if (!currentUser || !currentUser.merchantId) {
-      toast({ title: "Error", description: "Merchant information not found.", variant: "destructive" });
+      toast({ title: "Error", description: "Merchant information not found. Cannot load settings.", variant: "destructive" });
       setIsFetching(false);
-      form.reset(defaultSettings); // Reset to default if no merchantId
+      form.reset(defaultSettings);
       return;
     }
 
@@ -85,21 +94,22 @@ export function SettingsForm() {
       if (docSnap.exists()) {
         form.reset(docSnap.data() as SettingsFormValues);
       } else {
-        // No settings document exists, use default values
         form.reset(defaultSettings);
         console.log("No settings document found for merchant, using defaults.");
       }
     } catch (error) {
       console.error("Error fetching settings:", error);
       toast({ title: "Fetch Failed", description: "Could not load system settings.", variant: "destructive" });
-      form.reset(defaultSettings); // Reset to default on error
+      form.reset(defaultSettings);
     }
     setIsFetching(false);
-  }, [currentUser, form, toast]);
+  }, [currentUser, form, toast, isUserLoaded]); // Added isUserLoaded
 
   useEffect(() => {
-    fetchSettings();
-  }, [fetchSettings]);
+    if (isUserLoaded) { // Only fetch settings if user data has been attempted to be loaded
+      fetchSettings();
+    }
+  }, [fetchSettings, isUserLoaded]); // Added isUserLoaded
 
   async function onSubmit(values: SettingsFormValues) {
     if (!currentUser || !currentUser.merchantId) {
@@ -109,7 +119,7 @@ export function SettingsForm() {
     setIsLoading(true);
     try {
       const settingsRef = doc(db, "settings", currentUser.merchantId);
-      await setDoc(settingsRef, values, { merge: true }); // Use setDoc with merge to create or update
+      await setDoc(settingsRef, values, { merge: true });
 
       toast({
         title: "Settings Saved!",
@@ -122,14 +132,43 @@ export function SettingsForm() {
     setIsLoading(false);
   }
 
-  if (isFetching) {
+  if (!isUserLoaded || (isFetching && !form.formState.isDirty)) { // Show loader if user not loaded OR fetching initial data
     return (
       <div className="flex justify-center items-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="ml-2 text-muted-foreground">Loading settings...</p>
+        <p className="ml-2 text-muted-foreground">
+          {!isUserLoaded ? "Loading user data..." : "Loading settings..."}
+        </p>
       </div>
     );
   }
+  
+  if (isUserLoaded && !currentUser) {
+    return (
+      <Card className="max-w-2xl mx-auto shadow-lg">
+        <CardHeader>
+          <CardTitle className="font-headline text-xl">Transaction Settings</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-destructive text-center">User not identified. Please log in to manage settings.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isUserLoaded && currentUser && !currentUser.merchantId) {
+     return (
+      <Card className="max-w-2xl mx-auto shadow-lg">
+        <CardHeader>
+          <CardTitle className="font-headline text-xl">Transaction Settings</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-destructive text-center">Merchant information not found for your account. Cannot manage settings.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
 
   return (
     <Card className="max-w-2xl mx-auto shadow-lg">
