@@ -239,8 +239,8 @@ export function ProductsTable() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-[250px] font-headline">Name</TableHead>
-              <TableHead className="font-headline text-right">Price (Base Unit)</TableHead>
-              <TableHead className="font-headline text-right">Stock (Base Unit)</TableHead>
+              <TableHead className="font-headline text-right">Price</TableHead>
+              <TableHead className="font-headline text-right">Stock </TableHead>
               <TableHead className="font-headline">Supplier</TableHead>
               <TableHead className="font-headline">Barcode</TableHead>
               <TableHead className="w-[100px] text-right font-headline">Actions</TableHead>

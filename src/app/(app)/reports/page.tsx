@@ -30,6 +30,7 @@ import type { Transaction, Outlet, User as FirestoreUserType } from '@/types';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { Input } from '@/components/ui/input'; // Ensure Input is imported if used for kasir outlet display
 
 interface StoredUser {
   id: string;
@@ -75,13 +76,13 @@ export default function ReportsPage() {
     from: subDays(new Date(), 7),
     to: new Date(),
   });
-  const [selectedOutletFilter, setSelectedOutletFilter] = useState<string>("all"); // For admin filter
+  const [selectedOutletFilter, setSelectedOutletFilter] = useState<string>("all"); 
   const [selectedKasirFilter, setSelectedKasirFilter] = useState<string>("all");
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("all");
   
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
-  const [allMerchantOutlets, setAllMerchantOutlets] = useState<Outlet[]>([]); // Outlets for admin to filter by
-  const [allMerchantKasirs, setAllMerchantKasirs] = useState<FirestoreUserType[]>([]); // Kasirs for admin to filter by
+  const [allMerchantOutlets, setAllMerchantOutlets] = useState<Outlet[]>([]); 
+  const [allMerchantKasirs, setAllMerchantKasirs] = useState<FirestoreUserType[]>([]); 
   const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([]);
   
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -99,7 +100,7 @@ export default function ReportsPage() {
         const outlet = getSelectedOutletFromStorage();
         setKasirSelectedOutlet(outlet);
         if (outlet) {
-            setSelectedOutletFilter(outlet.id); // Lock filter for kasir
+            setSelectedOutletFilter(outlet.id); 
         }
     }
   }, []);
@@ -116,36 +117,31 @@ export default function ReportsPage() {
     try {
       const merchantId = currentUser.merchantId;
 
-      // Fetch Outlets (only if admin, kasir uses their single selected outlet)
       if (currentUser.role === 'admin') {
         const outletsQuery = query(collection(db, "outlets"), where("merchantId", "==", merchantId), orderBy("name", "asc"));
         const outletsSnapshot = await getDocs(outletsQuery);
         const fetchedOutlets: Outlet[] = outletsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Outlet));
         setAllMerchantOutlets(fetchedOutlets);
       } else if (currentUser.role === 'kasir' && kasirSelectedOutlet) {
-        setAllMerchantOutlets([{id: kasirSelectedOutlet.id, name: kasirSelectedOutlet.name, merchantId: merchantId, address: ''}]); // Mock structure for consistency
+        setAllMerchantOutlets([{id: kasirSelectedOutlet.id, name: kasirSelectedOutlet.name, merchantId: merchantId, address: ''}]); 
       }
 
-      // Fetch Kasirs (Users with role 'kasir' for this merchant)
-      if (currentUser.role === 'admin') { // Only admin can filter by kasir
+      if (currentUser.role === 'admin') { 
         const kasirsQuery = query(collection(db, "users"), where("merchantId", "==", merchantId), where("role", "==", "kasir"), orderBy("name", "asc"));
         const kasirsSnapshot = await getDocs(kasirsQuery);
         const fetchedKasirs: FirestoreUserType[] = kasirsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreUserType));
         setAllMerchantKasirs(fetchedKasirs);
       }
       
-      // Build Transactions Query
-      let transactionsQueryConstraints = [
+      let transactionsQueryConstraints: any[] = [ // Use any[] for flexibility with push
         where("merchantId", "==", merchantId),
         orderBy("timestamp", "desc")
       ];
 
-      // Apply initial filters based on role
       if (currentUser.role === 'kasir' && kasirSelectedOutlet?.id) {
         transactionsQueryConstraints.push(where("outletId", "==", kasirSelectedOutlet.id));
       }
-      // Date range is applied in applyFilters or initial fetch if needed immediately
-
+      
       const transactionsQuery = query(collection(db, "transactions"), ...transactionsQueryConstraints);
       const transactionsSnapshot = await getDocs(transactionsQuery);
       const fetchedTransactions: Transaction[] = transactionsSnapshot.docs.map(doc => {
@@ -157,7 +153,6 @@ export default function ReportsPage() {
         } as Transaction;
       });
       setAllTransactions(fetchedTransactions);
-      // Apply current filters to fetched transactions
       applyFilters(fetchedTransactions); 
 
     } catch (error: any) {
@@ -165,7 +160,7 @@ export default function ReportsPage() {
       toast({ title: "Fetch Failed", description: `Could not load report data: ${error.message}`, variant: "destructive" });
     }
     setIsLoading(false);
-  }, [isClient, currentUser, toast, kasirSelectedOutlet]); // Dependencies for fetchReportData callback
+  }, [isClient, currentUser, toast, kasirSelectedOutlet]); 
 
   useEffect(() => {
     if (isClient && currentUser) {
@@ -181,7 +176,7 @@ export default function ReportsPage() {
 
 
   const applyFilters = (sourceTransactions: Transaction[] = allTransactions) => {
-    if (isLoading && !sourceTransactions.length) return; // Prevent filtering if still loading initial data
+    if (isLoading && !sourceTransactions.length) return; 
     let transactions = [...sourceTransactions]; 
 
     if (dateRange?.from) {
@@ -199,14 +194,13 @@ export default function ReportsPage() {
         });
     }
 
-    // Outlet filter: respects kasir's fixed outlet or admin's selection
     if (currentUser?.role === 'kasir' && kasirSelectedOutlet?.id) {
         transactions = transactions.filter(t => t.outletId === kasirSelectedOutlet.id);
     } else if (selectedOutletFilter !== "all") {
       transactions = transactions.filter(t => t.outletId === selectedOutletFilter);
     }
 
-    if (selectedKasirFilter !== "all" && currentUser?.role !== 'kasir') { // Kasirs don't filter by other kasirs
+    if (selectedKasirFilter !== "all" && currentUser?.role !== 'kasir') { 
       transactions = transactions.filter(t => t.kasirId === selectedKasirFilter);
     }
     if (selectedPaymentMethod !== "all") {
@@ -215,9 +209,8 @@ export default function ReportsPage() {
     setFilteredTransactions(transactions);
   };
   
-  // Trigger applyFilters when filter states change
   useEffect(() => {
-    if (!isLoading) { // Only apply if not initially loading
+    if (!isLoading) { 
         applyFilters();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -227,12 +220,11 @@ export default function ReportsPage() {
   const resetFilters = () => {
     if (isLoading) return; 
     setDateRange({ from: subDays(new Date(), 7), to: new Date() });
-    if (currentUser?.role !== 'kasir') { // Kasir's outlet filter is fixed
+    if (currentUser?.role !== 'kasir') { 
       setSelectedOutletFilter("all");
     }
     setSelectedKasirFilter("all");
     setSelectedPaymentMethod("all");
-    // applyFilters will be called by its own useEffect
   };
 
   const exportToExcel = () => {
@@ -244,7 +236,7 @@ export default function ReportsPage() {
             Date: format(transactionDate, "yyyy-MM-dd HH:mm"), 
             Outlet: allMerchantOutlets.find(o => o.id === t.outletId)?.name || t.outletName || 'N/A',
             Kasir: allMerchantKasirs.find(k => k.id === t.kasirId)?.name || t.kasirName || (currentUser?.role === 'kasir' ? currentUser.displayName : 'N/A'),
-            'Payment Method': t.paymentMethod,
+            'Payment Method': t.paymentMethod.toUpperCase(),
             Total: t.totalAmount,
         };
     });
@@ -254,9 +246,17 @@ export default function ReportsPage() {
         return;
     }
 
-    const csvContent = "data:text/csv;charset=utf-8," 
-      + Object.keys(dataToExport[0]).join(",") + "\n"
-      + dataToExport.map(e => Object.values(e).map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += Object.keys(dataToExport[0]).join(",") + "\n";
+    csvContent += dataToExport.map(e => Object.values(e).map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
+
+    // Add summary rows
+    const totalTransactionsCount = filteredTransactions.length;
+    const totalSalesAmount = filteredTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
+
+    csvContent += "\n\n"; // Add a couple of empty lines for separation
+    csvContent += `Total Transactions:,${totalTransactionsCount}\n`;
+    csvContent += `Total Sales Amount (IDR):,"${new Intl.NumberFormat('id-ID').format(totalSalesAmount)}"\n`;
     
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -362,12 +362,14 @@ export default function ReportsPage() {
           <div className="space-y-2">
             <Label htmlFor="outlet-filter">Outlet</Label>
             {currentUser?.role === 'kasir' && kasirSelectedOutlet ? (
-                 <Input 
-                    value={kasirSelectedOutlet.name} 
-                    disabled 
-                    className="w-full [&_svg]:hidden" 
-                    prependIcon={<Store className="h-4 w-4 text-muted-foreground mr-2"/>}
-                 />
+                 <div className="relative flex items-center">
+                    <Store className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                    <Input 
+                        value={kasirSelectedOutlet.name} 
+                        disabled 
+                        className="w-full pl-10"
+                    />
+                 </div>
             ) : (
                 <Select 
                     value={selectedOutletFilter} 
@@ -420,7 +422,6 @@ export default function ReportsPage() {
             </Select>
           </div>
           <div className="flex gap-2">
-            {/* Apply Filters button is removed as filters apply automatically on change via useEffect */}
              <Button onClick={resetFilters} variant="outline" className="w-full sm:w-auto" disabled={isLoading}>
               <RotateCcw className="mr-2 h-4 w-4" /> Reset
             </Button>

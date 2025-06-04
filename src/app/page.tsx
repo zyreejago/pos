@@ -27,12 +27,10 @@ export default function HomePage() {
             </Link>
           </Button>
         </div>
-         <p className="text-sm text-muted-foreground">
-          Superadmin? Manage users <Link href="/admin/users" className="underline hover:text-primary">here</Link>.
-        </p>
+         
       </div>
       <footer className="absolute bottom-8 text-center text-muted-foreground text-sm">
-        <p>&copy; {new Date().getFullYear()} Toko App. Built with Firebase Studio.</p>
+        <p>&copy; {new Date().getFullYear()} Toko App. Built with Rezzy Al Zamzammi.</p>
       </footer>
     </div>
   );

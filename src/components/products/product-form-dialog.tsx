@@ -33,12 +33,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { Product, Supplier } from "@/types";
-import { PlusCircle, Trash2, Package, Tag, Warehouse, Barcode, DollarSign, PackageSearch } from "lucide-react";
+import { PlusCircle, Trash2, Package, Tag, Warehouse, Barcode, DollarSign, PackageSearch, Info } from "lucide-react";
 import { useState, useEffect } from "react"; 
 import { db, serverTimestamp } from '@/lib/firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { useToast } from "@/hooks/use-toast";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
+
+const formatNumberWithDots = (value: number | string | undefined): string => {
+  if (value === undefined || value === null) return '';
+  const numStr = String(value).replace(/\D/g, '');
+  if (numStr === '') return '';
+  return Number(numStr).toLocaleString('id-ID');
+};
+
+const parseFormattedNumber = (value: string): number => {
+  return Number(String(value).replace(/\./g, ''));
+};
 
 const unitSchema = z.object({
   name: z.string().min(1, "Unit name is required"),
@@ -132,6 +144,10 @@ export function ProductFormDialog({
     name: "units",
   });
 
+  // Local states for formatted input values for each unit
+  const [formattedPrices, setFormattedPrices] = useState<string[]>([]);
+  const [formattedStocks, setFormattedStocks] = useState<string[]>([]);
+
   useEffect(() => {
     if (isOpenProp !== undefined) {
       setIsDialogOpen(isOpenProp);
@@ -151,6 +167,10 @@ export function ProductFormDialog({
         barcode: product?.barcode || "",
         units: initialUnits,
       });
+      
+      // Initialize formatted values
+      setFormattedPrices(initialUnits.map(u => formatNumberWithDots(u.price)));
+      setFormattedStocks(initialUnits.map(u => formatNumberWithDots(u.stock)));
       
       if (initialUnits.length > 0 && !initialUnits.some(u => u.isBaseUnit)) {
         const updatedUnits = initialUnits.map((u, i) => i === 0 ? { ...u, isBaseUnit: true } : u);
@@ -188,7 +208,6 @@ export function ProductFormDialog({
         conversionFactor: unit.isBaseUnit ? 1 : (unit.conversionFactor || 1),
     }));
 
-    // Prepare data for Firestore, explicitly excluding undefined optional fields
     const dataForFirestore: {
         name: string;
         units: typeof processedUnits;
@@ -196,7 +215,6 @@ export function ProductFormDialog({
         buyOwn: boolean;
         supplierId?: string;
         barcode?: string;
-        // Timestamps will be added by Firestore
     } = {
         name: formData.name,
         units: processedUnits,
@@ -244,6 +262,38 @@ export function ProductFormDialog({
   
   const dialogTrigger = triggerButton ? triggerButton : <Button><PlusCircle className="mr-2 h-4 w-4" /> Add Product</Button>;
 
+  const handleFormattedPriceChange = (index: number, value: string) => {
+    const newFormattedPrices = [...formattedPrices];
+    newFormattedPrices[index] = formatNumberWithDots(value);
+    setFormattedPrices(newFormattedPrices);
+    form.setValue(`units.${index}.price`, parseFormattedNumber(value));
+  };
+
+  const handleFormattedStockChange = (index: number, value: string) => {
+    const newFormattedStocks = [...formattedStocks];
+    newFormattedStocks[index] = formatNumberWithDots(value);
+    setFormattedStocks(newFormattedStocks);
+    form.setValue(`units.${index}.stock`, parseFormattedNumber(value));
+  };
+  
+  const handleAppendUnit = () => {
+    append({ name: '', price: 0, stock: 0, isBaseUnit: fields.length === 0, conversionFactor: 1 });
+    setFormattedPrices([...formattedPrices, '0']);
+    setFormattedStocks([...formattedStocks, '0']);
+  };
+
+  const handleRemoveUnit = (index: number) => {
+    remove(index);
+    const newPrices = [...formattedPrices];
+    newPrices.splice(index, 1);
+    setFormattedPrices(newPrices);
+
+    const newStocks = [...formattedStocks];
+    newStocks.splice(index, 1);
+    setFormattedStocks(newStocks);
+  };
+
+
   return (
     <Dialog open={isDialogOpen} onOpenChange={handleOpenChange}>
       {triggerButton && <DialogTrigger asChild>{dialogTrigger}</DialogTrigger>}
@@ -276,7 +326,7 @@ export function ProductFormDialog({
             <div className="space-y-4 rounded-md border p-4">
               <div className="flex justify-between items-center mb-2">
                 <h3 className="text-lg font-medium font-headline">Units & Pricing</h3>
-                 <Button type="button" variant="outline" size="sm" onClick={() => append({ name: '', price: 0, stock: 0, isBaseUnit: fields.length === 0, conversionFactor: 1 })}>
+                 <Button type="button" variant="outline" size="sm" onClick={handleAppendUnit}>
                   <PlusCircle className="mr-2 h-4 w-4" /> Add Unit
                 </Button>
               </div>
@@ -293,34 +343,38 @@ export function ProductFormDialog({
                       </FormItem>
                     )}
                   />
-                  <FormField
-                    control={form.control}
-                    name={`units.${index}.price`}
-                    render={({ field: unitField }) => (
-                       <FormItem className="md:col-span-3">
-                        <FormLabel>Price (IDR)</FormLabel>
-                         <div className="relative">
-                            <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                            <FormControl><Input type="number" placeholder="15000" {...unitField} className="pl-10" /></FormControl>
-                        </div>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name={`units.${index}.stock`}
-                    render={({ field: unitField }) => (
-                      <FormItem className="md:col-span-2">
-                        <FormLabel>Stock</FormLabel>
-                        <div className="relative">
-                            <Warehouse className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                            <FormControl><Input type="number" placeholder="100" {...unitField} className="pl-10" /></FormControl>
-                        </div>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  <FormItem className="md:col-span-3">
+                    <FormLabel>Price (IDR)</FormLabel>
+                      <div className="relative">
+                        <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <FormControl>
+                          <Input 
+                            type="text" 
+                            placeholder="15.000" 
+                            value={formattedPrices[index] || ''}
+                            onChange={(e) => handleFormattedPriceChange(index, e.target.value)}
+                            className="pl-10" 
+                          />
+                        </FormControl>
+                    </div>
+                    <FormMessage>{form.formState.errors.units?.[index]?.price?.message}</FormMessage>
+                  </FormItem>
+                  <FormItem className="md:col-span-2">
+                    <FormLabel>Stock</FormLabel>
+                    <div className="relative">
+                        <Warehouse className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <FormControl>
+                          <Input 
+                            type="text" 
+                            placeholder="100" 
+                            value={formattedStocks[index] || ''}
+                            onChange={(e) => handleFormattedStockChange(index, e.target.value)}
+                            className="pl-10" 
+                          />
+                        </FormControl>
+                    </div>
+                    <FormMessage>{form.formState.errors.units?.[index]?.stock?.message}</FormMessage>
+                  </FormItem>
                   <FormField
                     control={form.control}
                     name={`units.${index}.isBaseUnit`}
@@ -344,7 +398,19 @@ export function ProductFormDialog({
                         name={`units.${index}.conversionFactor`}
                         render={({ field: unitField }) => (
                         <FormItem className="md:col-span-2">
-                            <FormLabel>To Base Qty</FormLabel>
+                            <FormLabel className="flex items-center">
+                                To Base Qty
+                                <TooltipProvider>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Info className="h-3 w-3 ml-1 text-muted-foreground cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-xs">
+                                        <p>How many <strong>base units</strong> are in <strong>this unit</strong>? Example: If base unit is 'pcs' and this unit is 'dus', and 1 dus = 12 pcs, enter 12.</p>
+                                    </TooltipContent>
+                                </Tooltip>
+                                </TooltipProvider>
+                            </FormLabel>
                             <FormControl><Input type="number" placeholder="e.g., 12" {...unitField} /></FormControl>
                             <FormMessage />
                         </FormItem>
@@ -353,7 +419,7 @@ export function ProductFormDialog({
                   )}
                  
                   {fields.length > 1 && (
-                     <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} className="md:col-span-1 self-center mt-6 text-destructive hover:bg-destructive/10">
+                     <Button type="button" variant="ghost" size="icon" onClick={() => handleRemoveUnit(index)} className="md:col-span-1 self-center mt-6 text-destructive hover:bg-destructive/10">
                         <Trash2 className="h-4 w-4" />
                         <span className="sr-only">Remove unit</span>
                      </Button>
