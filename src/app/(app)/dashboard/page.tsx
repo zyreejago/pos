@@ -1,26 +1,42 @@
-
 "use client";
 
 import type { Metadata } from 'next';
-import { DollarSign, Users, CreditCard, Activity, ShoppingBag, FileText, Truck, Building, Loader2 } from 'lucide-react';
+import { Users, CreditCard, Activity, ShoppingBag, FileText, Truck, Building, Loader2, TrendingUp } from 'lucide-react';
 import { StatsCard } from '@/components/dashboard/stats-card';
 import { RecentSalesTable } from '@/components/dashboard/recent-sales-table';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, forwardRef } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
-import type { Transaction as FirestoreTransaction, User as StoredUserType } from '@/types';
+import type { Transaction as FirestoreTransaction, User as StoredUserType, Product } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { startOfMonth, endOfMonth, format } from 'date-fns';
+import type { SVGProps } from 'react';
 
-// Metadata can be defined statically if 'use client' is used, but it's better managed in layout or page for server components.
-// For client components, dynamic titles can be set using document.title if needed.
-// export const metadata: Metadata = {
-//   title: 'Dashboard - Toko App',
-//   description: 'Overview of your business performance.',
-// };
+// Komponen kustom untuk ikon Rupiah yang kompatibel dengan LucideIcon
+const RupiahIcon = forwardRef<SVGSVGElement, SVGProps<SVGSVGElement>>((props, ref) => {
+  return (
+    <svg
+      ref={ref}
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <text x="4" y="16" fontSize="12" fontWeight="bold">Rp</text>
+    </svg>
+  );
+});
+
+RupiahIcon.displayName = 'RupiahIcon';
 
 interface StoredUser {
   id: string;
@@ -37,6 +53,7 @@ interface SelectedOutlet {
 }
 
 export default function DashboardPage() {
+  
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
   const [selectedOutlet, setSelectedOutlet] = useState<SelectedOutlet | null>(null);
   const [transactions, setTransactions] = useState<FirestoreTransaction[]>([]);
@@ -47,6 +64,8 @@ export default function DashboardPage() {
   const [totalTransactionsCount, setTotalTransactionsCount] = useState(0);
   const [activeKasirsCount, setActiveKasirsCount] = useState(0);
   const [recentSales, setRecentSales] = useState<FirestoreTransaction[]>([]);
+  const [totalProfit, setTotalProfit] = useState(0);
+  const [products, setProducts] = useState<Product[]>([]);
   
   const [isClient, setIsClient] = useState(false);
 
@@ -78,6 +97,31 @@ export default function DashboardPage() {
     }
   }, [toast]);
 
+  const fetchProducts = useCallback(async () => {
+    if (!currentUser || !currentUser.merchantId) {
+      setProducts([]);
+      return;
+    }
+
+    try {
+      const q = query(
+        collection(db, "products"),
+        where("merchantId", "==", currentUser.merchantId)
+      );
+      const querySnapshot = await getDocs(q);
+      const fetchedProducts: Product[] = [];
+      querySnapshot.forEach((doc) => {
+        fetchedProducts.push({ id: doc.id, ...doc.data() } as Product);
+      });
+      setProducts(fetchedProducts);
+
+    } catch (error: any) {
+      console.error("Error fetching products: ", error);
+      toast({ title: "Product Fetch Failed", description: `Could not fetch products data. ${error.message}`, variant: "destructive" });
+      setProducts([]);
+    }
+  }, [currentUser, toast]);
+
   const fetchDashboardData = useCallback(async () => {
     if (!currentUser || !currentUser.merchantId) {
       setIsLoading(false);
@@ -91,6 +135,53 @@ export default function DashboardPage() {
     setIsLoading(true);
 
     try {
+      // Fetch all transactions for profit calculation (not limited by month)
+      let allTransactionsQueryConstraints = [
+        where("merchantId", "==", currentUser.merchantId)
+      ];
+
+      if (currentUser.role === 'kasir' && selectedOutlet?.id) {
+        allTransactionsQueryConstraints.push(where("outletId", "==", selectedOutlet.id));
+      }
+      
+      const allTransactionsQuery = query(collection(db, "transactions"), ...allTransactionsQueryConstraints, orderBy("timestamp", "desc"));
+      const allTransactionsSnapshot = await getDocs(allTransactionsQuery);
+      
+      const allFetchedTransactions: FirestoreTransaction[] = [];
+      let cumulativeProfit = 0;
+      
+      allTransactionsSnapshot.forEach((doc) => {
+        const data = doc.data();
+        const transaction = { 
+          id: doc.id, 
+          ...data,
+          timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(data.timestamp) 
+        } as FirestoreTransaction;
+        
+        allFetchedTransactions.push(transaction);
+        
+        // Calculate profit for each transaction
+        // Assuming each transaction item has productId, quantity, pricePerUnit
+        // We need to find the corresponding product's cost price
+        transaction.items.forEach(item => {
+          // Find the product
+          const product = products.find(p => p.id === item.productId);
+          if (product) {
+            // Find the unit
+            const unit = product.units.find(u => u.name === item.unitName);
+            if (unit && unit.costPrice) {
+              // Calculate profit: (selling price - cost price) * quantity
+              const itemProfit = (item.pricePerUnit - unit.costPrice) * item.quantity;
+              cumulativeProfit += itemProfit;
+            }
+          }
+        });
+      });
+      
+      // Set the cumulative profit
+      setTotalProfit(cumulativeProfit);
+
+      // Now fetch transactions for the current month for other dashboard stats
       const now = new Date();
       const firstDayOfMonth = startOfMonth(now);
       const lastDayOfMonth = endOfMonth(now);
@@ -140,7 +231,7 @@ export default function DashboardPage() {
       setRecentSales([]);
     }
     setIsLoading(false);
-  }, [currentUser, selectedOutlet, toast]);
+  }, [currentUser, selectedOutlet, toast, products]);
 
   useEffect(() => {
     if (isClient && currentUser) {
@@ -148,9 +239,9 @@ export default function DashboardPage() {
         // or if superadmin (who doesn't have a merchantId relevant for this dashboard).
         // For superadmin, this dashboard might not be relevant or show aggregate data (not implemented here).
         if (currentUser.merchantId || currentUser.role === 'admin') { // Admins always have merchantId
-             fetchDashboardData();
+             fetchProducts();
         } else if (currentUser.role === 'kasir' && selectedOutlet) {
-             fetchDashboardData();
+             fetchProducts();
         } else if (currentUser.role === 'superadmin') {
             setIsLoading(false); // Superadmin doesn't have typical merchant data
             setTotalRevenue(0);
@@ -164,8 +255,14 @@ export default function DashboardPage() {
     } else if (isClient && !currentUser) {
         setIsLoading(false); // No user, stop loading
     }
-  }, [isClient, currentUser, selectedOutlet, fetchDashboardData, toast]);
+  }, [isClient, currentUser, selectedOutlet, fetchProducts, toast]);
 
+  // After products are loaded, fetch dashboard data
+  useEffect(() => {
+    if (products.length > 0 || (isClient && currentUser)) {
+      fetchDashboardData();
+    }
+  }, [products, isClient, currentUser, fetchDashboardData]);
 
   const averageSale = totalTransactionsCount > 0 ? totalRevenue / totalTransactionsCount : 0;
 
@@ -201,12 +298,19 @@ export default function DashboardPage() {
         {/* Add date range picker or other global filters here if needed */}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <StatsCard
           title="Total Revenue"
           value={new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(totalRevenue)}
-          icon={DollarSign}
+          icon={RupiahIcon}
           description={`This month (${format(new Date(), 'MMMM yyyy')})`}
+        />
+        <StatsCard
+          title="Total Profit"
+          value={new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(totalProfit)}
+          icon={TrendingUp}
+          description={`Laba dari selisih harga jual dan beli`}
+          trendColor={totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}
         />
         <StatsCard
           title="Total Transactions"
@@ -250,7 +354,7 @@ export default function DashboardPage() {
         <CardContent className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           <Button variant="outline" asChild className="flex flex-col h-auto p-4 items-center justify-center gap-2 text-center hover:bg-accent/50">
             <Link href="/pos">
-              <DollarSign className="h-8 w-8 text-primary" />
+              <RupiahIcon className="h-8 w-8 text-primary" />
               <span className="text-sm font-medium">New Sale (POS)</span>
             </Link>
           </Button>

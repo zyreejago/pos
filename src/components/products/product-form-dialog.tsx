@@ -1,4 +1,3 @@
-
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -55,6 +54,7 @@ const parseFormattedNumber = (value: string): number => {
 const unitSchema = z.object({
   name: z.string().min(1, "Unit name is required"),
   price: z.coerce.number().min(0, "Price must be non-negative"),
+  costPrice: z.coerce.number().min(0, "Cost price must be non-negative"),
   stock: z.coerce.number().min(0, "Stock must be non-negative"),
   isBaseUnit: z.boolean().optional(),
   conversionFactor: z.coerce.number().min(1, "Factor must be at least 1").optional(),
@@ -129,13 +129,13 @@ export function ProductFormDialog({
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
     defaultValues: product ? 
-      { ...product, supplierId: product.supplierId || NO_SUPPLIER_VALUE, units: product.units || [{ name: 'pcs', price: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }] } : 
+      { ...product, supplierId: product.supplierId || NO_SUPPLIER_VALUE, units: product.units || [{ name: 'pcs', price: 0, costPrice: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }] } : 
       {
         name: "",
         supplierId: NO_SUPPLIER_VALUE,
         buyOwn: false,
         barcode: "",
-        units: [{ name: '', price: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }],
+        units: [{ name: '', price: 0, costPrice: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }],
       },
   });
 
@@ -146,6 +146,7 @@ export function ProductFormDialog({
 
   // Local states for formatted input values for each unit
   const [formattedPrices, setFormattedPrices] = useState<string[]>([]);
+  const [formattedCostPrices, setFormattedCostPrices] = useState<string[]>([]);
   const [formattedStocks, setFormattedStocks] = useState<string[]>([]);
 
   useEffect(() => {
@@ -158,7 +159,7 @@ export function ProductFormDialog({
     if (isDialogOpen) {
       const initialUnits = product?.units && product.units.length > 0 
         ? product.units 
-        : [{ name: '', price: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }];
+        : [{ name: '', price: 0, costPrice: 0, stock: 0, isBaseUnit: true, conversionFactor: 1 }];
       
       form.reset({
         name: product?.name || "",
@@ -170,6 +171,7 @@ export function ProductFormDialog({
       
       // Initialize formatted values
       setFormattedPrices(initialUnits.map(u => formatNumberWithDots(u.price)));
+      setFormattedCostPrices(initialUnits.map(u => formatNumberWithDots(u.costPrice || 0)));
       setFormattedStocks(initialUnits.map(u => formatNumberWithDots(u.stock)));
       
       if (initialUnits.length > 0 && !initialUnits.some(u => u.isBaseUnit)) {
@@ -269,6 +271,13 @@ export function ProductFormDialog({
     form.setValue(`units.${index}.price`, parseFormattedNumber(value));
   };
 
+  const handleFormattedCostPriceChange = (index: number, value: string) => {
+    const newFormattedCostPrices = [...formattedCostPrices];
+    newFormattedCostPrices[index] = formatNumberWithDots(value);
+    setFormattedCostPrices(newFormattedCostPrices);
+    form.setValue(`units.${index}.costPrice`, parseFormattedNumber(value));
+  };
+
   const handleFormattedStockChange = (index: number, value: string) => {
     const newFormattedStocks = [...formattedStocks];
     newFormattedStocks[index] = formatNumberWithDots(value);
@@ -277,8 +286,9 @@ export function ProductFormDialog({
   };
   
   const handleAppendUnit = () => {
-    append({ name: '', price: 0, stock: 0, isBaseUnit: fields.length === 0, conversionFactor: 1 });
+    append({ name: '', price: 0, costPrice: 0, stock: 0, isBaseUnit: fields.length === 0, conversionFactor: 1 });
     setFormattedPrices([...formattedPrices, '0']);
+    setFormattedCostPrices([...formattedCostPrices, '0']);
     setFormattedStocks([...formattedStocks, '0']);
   };
 
@@ -287,6 +297,10 @@ export function ProductFormDialog({
     const newPrices = [...formattedPrices];
     newPrices.splice(index, 1);
     setFormattedPrices(newPrices);
+
+    const newCostPrices = [...formattedCostPrices];
+    newCostPrices.splice(index, 1);
+    setFormattedCostPrices(newCostPrices);
 
     const newStocks = [...formattedStocks];
     newStocks.splice(index, 1);
@@ -336,15 +350,31 @@ export function ProductFormDialog({
                     control={form.control}
                     name={`units.${index}.name`}
                     render={({ field: unitField }) => (
-                      <FormItem className="md:col-span-3">
+                      <FormItem className="md:col-span-2">
                         <FormLabel>Unit Name</FormLabel>
                         <FormControl><Input placeholder="e.g., pcs, dus" {...unitField} /></FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                  <FormItem className="md:col-span-3">
-                    <FormLabel>Price (IDR)</FormLabel>
+                  <FormItem className="md:col-span-2">
+                    <FormLabel>Harga Pokok (IDR)</FormLabel>
+                      <div className="relative">
+                        <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <FormControl>
+                          <Input 
+                            type="text" 
+                            placeholder="10.000" 
+                            value={formattedCostPrices[index] || ''}
+                            onChange={(e) => handleFormattedCostPriceChange(index, e.target.value)}
+                            className="pl-10" 
+                          />
+                        </FormControl>
+                    </div>
+                    <FormMessage>{form.formState.errors.units?.[index]?.costPrice?.message}</FormMessage>
+                  </FormItem>
+                  <FormItem className="md:col-span-2">
+                    <FormLabel>Harga Jual (IDR)</FormLabel>
                       <div className="relative">
                         <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                         <FormControl>
@@ -502,4 +532,3 @@ export function ProductFormDialog({
     </Dialog>
   );
 }
-

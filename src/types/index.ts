@@ -30,7 +30,8 @@ export interface Product {
   buyOwn?: boolean; // "Beli Sendiri" checkbox
   units: Array<{
     name: string; // e.g., "pcs", "dus"
-    price: number;
+    price: number; // Harga jual
+    costPrice: number; // Harga pokok
     stock: number;
     isBaseUnit?: boolean; // e.g., "pcs" is base, "dus" contains X pcs
     conversionFactor?: number; // How many base units in this unit

@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -7,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { Trash2, Search, DollarSign, QrCode, CreditCard, ShoppingCart, Loader2, Plus, Minus, Printer } from 'lucide-react';
+import { Trash2, Search, QrCode, CreditCard, ShoppingCart, Loader2, Plus, Minus, Printer } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { db, serverTimestamp } from '@/lib/firebase';
@@ -15,6 +14,31 @@ import { collection, query, where, getDocs, addDoc, doc, runTransaction, Timesta
 import type { Product as FirestoreProduct, Transaction as FirestoreTransaction, TransactionItem, SystemSettings } from '@/types';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { format } from 'date-fns';
+
+// Custom Rupiah Icon Component
+const RupiahIcon = React.forwardRef<
+  SVGSVGElement,
+  React.SVGProps<SVGSVGElement>
+>((props, ref) => (
+  <svg
+    ref={ref}
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M6 3h8a4 4 0 0 1 0 8H6V3z" />
+    <path d="M6 11h6a3 3 0 0 1 0 6H6v-6z" />
+    <path d="M6 21h12" />
+    <path d="M6 18h12" />
+  </svg>
+));
+RupiahIcon.displayName = "RupiahIcon";
 
 // Local interface for user data from localStorage
 interface StoredUser {
@@ -66,7 +90,6 @@ const formatCurrencyForReceipt = (amount: number | undefined) => {
   if (amount === undefined) return 'Rp 0';
   return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
 };
-
 
 export default function POSPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -259,10 +282,7 @@ export default function POSPage() {
       toast({ title: "Keranjang Kosong", description: "Harap tambahkan item ke keranjang sebelum pembayaran.", variant: "default" });
       return;
     }
-     if (paymentMethod === 'cash' && cashReceived < totalAmount) {
-      toast({ title: "Uang Tunai Kurang", description: "Uang tunai yang diterima kurang dari jumlah total.", variant: "default" });
-      return;
-    }
+    // Removed validation for cash received - payment can proceed even without entering amount
 
     setIsProcessingPayment(true);
 
@@ -333,7 +353,6 @@ export default function POSPage() {
         Object.entries(transactionDataForFirestore).filter(([key]) => key !== 'timestamp')
       ) as Omit<FirestoreTransaction, 'id' | 'timestamp'>;
 
-
       const receiptDataForDisplay: ReceiptDisplayData = {
         ...cleanRestOfData,
         displayId: newTransactionRef.id,
@@ -368,7 +387,93 @@ export default function POSPage() {
   };
   
   const handlePrintReceipt = () => {
-    window.print();
+    if (!receiptDetails || !selectedOutlet) return;
+    
+    const printWindow = window.open('', '_blank', 'width=300,height=600');
+    if (!printWindow) return;
+    
+    const receiptContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Nota Transaksi</title>
+        <style>
+          body {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.2;
+            margin: 0;
+            padding: 10px;
+            width: 280px;
+          }
+          .center { text-align: center; }
+          .bold { font-weight: bold; }
+          .separator { border-top: 1px dashed #000; margin: 5px 0; }
+          .item-row { display: flex; justify-content: space-between; }
+          .no-print { display: none; }
+          @media print {
+            body { width: auto; }
+            .no-print { display: none !important; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="center bold">${selectedOutlet.name}</div>
+        <div class="separator"></div>
+        <div>Kasir    : ${receiptDetails.kasirName}</div>
+        <div>Tanggal  : ${format(receiptDetails.displayTimestamp, "dd/MM/yyyy HH:mm:ss")}</div>
+        <div>No. Struk: ${receiptDetails.displayId.substring(0,10)}...</div>
+        <div class="separator"></div>
+        ${receiptDetails.items.map(item => `
+          <div>${item.productName} (${item.unitName})</div>
+          <div class="item-row">
+            <span>${item.quantity} x ${formatCurrencyForReceipt(item.pricePerUnit)}</span>
+            <span>${formatCurrencyForReceipt(item.totalPrice)}</span>
+          </div>
+        `).join('')}
+        <div class="separator"></div>
+        <div class="item-row">
+          <span>Subtotal</span>
+          <span>${formatCurrencyForReceipt(receiptDetails.subtotal)}</span>
+        </div>
+        <div class="item-row">
+          <span>Diskon (${discountRateValue.toFixed(0)}%)</span>
+          <span>-${formatCurrencyForReceipt(receiptDetails.discountAmount)}</span>
+        </div>
+        <div class="separator"></div>
+        <div class="item-row bold">
+          <span>TOTAL</span>
+          <span>${formatCurrencyForReceipt(receiptDetails.totalAmount)}</span>
+        </div>
+        <div class="separator"></div>
+        <div>Metode Bayar: ${receiptDetails.paymentMethod.toUpperCase()}</div>
+        ${receiptDetails.paymentMethod === 'cash' ? `
+          <div class="item-row">
+            <span>Tunai</span>
+            <span>${formatCurrencyForReceipt(receiptDetails.cashReceived)}</span>
+          </div>
+          <div class="item-row">
+            <span>Kembali</span>
+            <span>${formatCurrencyForReceipt(receiptDetails.changeGiven)}</span>
+          </div>
+        ` : ''}
+        <div class="separator"></div>
+        <div class="center">
+          <div>Terima Kasih!</div>
+          <div>Kunjungi Lagi Toko Kami.</div>
+        </div>
+      </body>
+      </html>
+    `;
+    
+    printWindow.document.write(receiptContent);
+    printWindow.document.close();
+    
+    // Wait for content to load then print
+    printWindow.onload = () => {
+      printWindow.print();
+      printWindow.close();
+    };
   };
 
   return (
@@ -499,8 +604,8 @@ export default function POSPage() {
                 <span>- {formatCurrencyForReceipt(discountAmount)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                <span>PPN ({(ppnRateValue).toFixed(0)}%)</span>
-                <span>{formatCurrencyForReceipt(ppnAmount)}</span>
+                {/* <span>PPN ({(ppnRateValue).toFixed(0)}%)</span>
+                <span>{formatCurrencyForReceipt(ppnAmount)}</span> */}
                 </div>
                 <Separator />
                 <div className="flex justify-between text-lg font-bold font-headline">
@@ -509,7 +614,7 @@ export default function POSPage() {
                 </div>
                 <div className="flex gap-2 pt-2">
                 <Button variant={paymentMethod === 'cash' ? 'default' : 'outline'} className="flex-1 gap-2" onClick={() => setPaymentMethod('cash')} disabled={isProcessingPayment}>
-                    <DollarSign className="h-4 w-4" /> Tunai
+                    <RupiahIcon className="h-4 w-4" /> Tunai
                 </Button>
                 <Button variant={paymentMethod === 'qris' ? 'default' : 'outline'} className="flex-1 gap-2" onClick={() => setPaymentMethod('qris')} disabled={isProcessingPayment}>
                     <QrCode className="h-4 w-4" /> QRIS
@@ -519,7 +624,7 @@ export default function POSPage() {
                 <div className="pt-2">
                     <Input
                     type="text"
-                    placeholder="Uang Diterima"
+                    placeholder="Uang Diterima (Opsional)"
                     value={formattedCashReceived}
                     onChange={handleCashReceivedChange}
                     className="text-right"
@@ -568,7 +673,6 @@ export default function POSPage() {
             <ScrollArea className="max-h-[60vh] p-1">
               <pre className="text-xs font-mono whitespace-pre-wrap p-3 bg-muted rounded-md leading-relaxed">
 {`
-TOKO APP
 ${selectedOutlet?.name || 'Outlet T/A'}
 ------------------------------------
 Kasir    : ${receiptDetails.kasirName || 'N/A'}
@@ -582,7 +686,6 @@ ${receiptDetails.items.map(item =>
 ------------------------------------
 Subtotal        : ${formatCurrencyForReceipt(receiptDetails.subtotal).padStart(15)}
 Diskon (${discountRateValue.toFixed(0)}%) : ${formatCurrencyForReceipt(receiptDetails.discountAmount).padStart(15)}
-PPN (${ppnRateValue.toFixed(0)}%)      : ${formatCurrencyForReceipt(receiptDetails.ppnAmount).padStart(15)}
 ------------------------------------
 TOTAL           : ${formatCurrencyForReceipt(receiptDetails.totalAmount).padStart(15)}
 ------------------------------------
@@ -609,4 +712,3 @@ Kembali         : ${formatCurrencyForReceipt(receiptDetails.changeGiven).padStar
     </div>
   );
 }
-
