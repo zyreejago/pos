@@ -32,7 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { Product, Supplier } from "@/types";
-import { PlusCircle, Trash2, Package, Tag, Warehouse, Barcode, DollarSign, PackageSearch, Info } from "lucide-react";
+import { PlusCircle, Trash2, Package, Tag, Warehouse, Barcode, PackageSearch, Info } from "lucide-react";
 import { useState, useEffect } from "react"; 
 import { db, serverTimestamp } from '@/lib/firebase';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
@@ -358,35 +358,27 @@ export function ProductFormDialog({
                     )}
                   />
                   <FormItem className="md:col-span-2">
-                    <FormLabel>Harga Pokok (IDR)</FormLabel>
-                      <div className="relative">
-                        <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <FormControl>
-                          <Input 
-                            type="text" 
-                            placeholder="10.000" 
-                            value={formattedCostPrices[index] || ''}
-                            onChange={(e) => handleFormattedCostPriceChange(index, e.target.value)}
-                            className="pl-10" 
-                          />
-                        </FormControl>
-                    </div>
+                    <FormLabel>Harga Pokok</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="text" 
+                        placeholder="10.000" 
+                        value={formattedCostPrices[index] || ''}
+                        onChange={(e) => handleFormattedCostPriceChange(index, e.target.value)}
+                      />
+                    </FormControl>
                     <FormMessage>{form.formState.errors.units?.[index]?.costPrice?.message}</FormMessage>
                   </FormItem>
                   <FormItem className="md:col-span-2">
-                    <FormLabel>Harga Jual (IDR)</FormLabel>
-                      <div className="relative">
-                        <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <FormControl>
-                          <Input 
-                            type="text" 
-                            placeholder="15.000" 
-                            value={formattedPrices[index] || ''}
-                            onChange={(e) => handleFormattedPriceChange(index, e.target.value)}
-                            className="pl-10" 
-                          />
-                        </FormControl>
-                    </div>
+                    <FormLabel>Harga Jual</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="text" 
+                        placeholder="15.000" 
+                        value={formattedPrices[index] || ''}
+                        onChange={(e) => handleFormattedPriceChange(index, e.target.value)}
+                      />
+                    </FormControl>
                     <FormMessage>{form.formState.errors.units?.[index]?.price?.message}</FormMessage>
                   </FormItem>
                   <FormItem className="md:col-span-2">
