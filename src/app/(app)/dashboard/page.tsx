@@ -1,7 +1,7 @@
 "use client";
 
 import type { Metadata } from 'next';
-import { Users, CreditCard, Activity, ShoppingBag, FileText, Truck, Building, Loader2, TrendingUp } from 'lucide-react';
+import { Users, CreditCard, Activity, ShoppingBag, FileText, Truck, Building, Loader2, TrendingUp, RotateCcw } from 'lucide-react';
 import { StatsCard } from '@/components/dashboard/stats-card';
 import { RecentSalesTable } from '@/components/dashboard/recent-sales-table';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +14,17 @@ import type { Transaction as FirestoreTransaction, User as StoredUserType, Produ
 import { useToast } from '@/hooks/use-toast';
 import { startOfMonth, endOfMonth, format } from 'date-fns';
 import type { SVGProps } from 'react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 // Komponen kustom untuk ikon Rupiah yang kompatibel dengan LucideIcon
 const RupiahIcon = forwardRef<SVGSVGElement, SVGProps<SVGSVGElement>>((props, ref) => {
@@ -232,7 +243,20 @@ export default function DashboardPage() {
     }
     setIsLoading(false);
   }, [currentUser, selectedOutlet, toast, products]);
-
+  const resetCalculations = () => {
+    setTotalRevenue(0);
+    setTotalTransactionsCount(0);
+    setActiveKasirsCount(0);
+    setTotalProfit(0);
+    setRecentSales([]);
+    setTransactions([]);
+    
+    toast({
+      title: "Perhitungan Direset",
+      description: "Semua data perhitungan dashboard telah direset ke nol.",
+      variant: "default"
+    });
+  };
   useEffect(() => {
     if (isClient && currentUser) {
         // Only fetch if currentUser is loaded and has a merchantId,
@@ -295,6 +319,29 @@ export default function DashboardPage() {
         <h1 className="text-3xl font-headline font-bold tracking-tight text-foreground">
             Dashboard {currentUser?.role === 'kasir' && selectedOutlet ? `- ${selectedOutlet.name}` : ''}
         </h1>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" className="flex items-center gap-2">
+              <RotateCcw className="h-4 w-4" />
+              Reset Perhitungan
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Konfirmasi Reset Perhitungan</AlertDialogTitle>
+              <AlertDialogDescription>
+                Apakah Anda yakin ingin mereset semua perhitungan dashboard? 
+                Tindakan ini akan mengatur ulang semua data statistik ke nol dan tidak dapat dibatalkan.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Batal</AlertDialogCancel>
+              <AlertDialogAction onClick={resetCalculations} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                Ya, Reset
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         {/* Add date range picker or other global filters here if needed */}
       </div>
 
