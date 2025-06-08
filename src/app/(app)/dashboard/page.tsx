@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import type { Metadata } from 'next';
 import { Users, CreditCard, Activity, ShoppingBag, FileText, Truck, Building, Loader2, TrendingUp, RotateCcw } from 'lucide-react';
@@ -12,7 +12,7 @@ import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 import type { Transaction as FirestoreTransaction, User as StoredUserType, Product } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-import { startOfMonth, endOfMonth, format } from 'date-fns';
+import { startOfMonth, endOfMonth, format, isSameDay } from 'date-fns';
 import type { SVGProps } from 'react';
 import {
   AlertDialog,
@@ -63,6 +63,13 @@ interface SelectedOutlet {
   name: string;
 }
 
+interface ResetState {
+  isReset: boolean;
+  timestamp: string;
+  outletId?: string;
+  merchantId?: string;
+}
+
 export default function DashboardPage() {
   
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
@@ -79,6 +86,50 @@ export default function DashboardPage() {
   const [products, setProducts] = useState<Product[]>([]);
   
   const [isClient, setIsClient] = useState(false);
+  const [isReset, setIsReset] = useState(false);
+
+  // Function to get reset key based on user context
+  const getResetKey = useCallback(() => {
+    if (currentUser?.role === 'kasir' && selectedOutlet) {
+      return `dashboardReset_${selectedOutlet.id}`;
+    } else if (currentUser?.merchantId) {
+      return `dashboardReset_${currentUser.merchantId}`;
+    }
+    return 'dashboardReset_default';
+  }, [currentUser, selectedOutlet]);
+
+  // Check if reset is active on component mount
+  useEffect(() => {
+    if (isClient && currentUser) {
+      const resetKey = getResetKey();
+      const savedReset = localStorage.getItem(resetKey);
+      
+      if (savedReset) {
+        try {
+          const resetData: ResetState = JSON.parse(savedReset);
+          const resetDate = new Date(resetData.timestamp);
+          const today = new Date();
+          
+          // Check if reset is still valid (same day)
+          if (isSameDay(resetDate, today)) {
+            setIsReset(true);
+            console.log('Reset masih aktif untuk hari ini');
+          } else {
+            // Reset expired, remove from localStorage
+            localStorage.removeItem(resetKey);
+            setIsReset(false);
+            console.log('Reset sudah expired, dihapus dari localStorage');
+          }
+        } catch (error) {
+          console.error('Error parsing reset data:', error);
+          localStorage.removeItem(resetKey);
+          setIsReset(false);
+        }
+      } else {
+        setIsReset(false);
+      }
+    }
+  }, [isClient, currentUser, selectedOutlet, getResetKey]);
 
   useEffect(() => {
     setIsClient(true);
@@ -134,6 +185,18 @@ export default function DashboardPage() {
   }, [currentUser, toast]);
 
   const fetchDashboardData = useCallback(async () => {
+    // If reset is active, don't fetch data
+    if (isReset) {
+      setIsLoading(false);
+      setTransactions([]);
+      setRecentSales([]);
+      setTotalRevenue(0);
+      setTotalTransactionsCount(0);
+      setActiveKasirsCount(0);
+      setTotalProfit(0);
+      return;
+    }
+
     if (!currentUser || !currentUser.merchantId) {
       setIsLoading(false);
       setTransactions([]);
@@ -242,8 +305,24 @@ export default function DashboardPage() {
       setRecentSales([]);
     }
     setIsLoading(false);
-  }, [currentUser, selectedOutlet, toast, products]);
+  }, [currentUser, selectedOutlet, toast, products, isReset]);
+
   const resetCalculations = () => {
+    const resetKey = getResetKey();
+    const resetState: ResetState = {
+      isReset: true,
+      timestamp: new Date().toISOString(),
+      outletId: selectedOutlet?.id,
+      merchantId: currentUser?.merchantId
+    };
+    
+    // Save reset state to localStorage
+    localStorage.setItem(resetKey, JSON.stringify(resetState));
+    
+    // Set reset flag
+    setIsReset(true);
+    
+    // Reset all state values
     setTotalRevenue(0);
     setTotalTransactionsCount(0);
     setActiveKasirsCount(0);
@@ -252,11 +331,12 @@ export default function DashboardPage() {
     setTransactions([]);
     
     toast({
-      title: "Perhitungan Direset",
-      description: "Semua data perhitungan dashboard telah direset ke nol.",
+      title: "Perhitungan Direset Permanent",
+      description: "Semua data perhitungan dashboard telah direset ke nol dan akan bertahan hingga hari berganti.",
       variant: "default"
     });
   };
+
   useEffect(() => {
     if (isClient && currentUser) {
         // Only fetch if currentUser is loaded and has a merchantId,
@@ -318,26 +398,30 @@ export default function DashboardPage() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h1 className="text-3xl font-headline font-bold tracking-tight text-foreground">
             Dashboard {currentUser?.role === 'kasir' && selectedOutlet ? `- ${selectedOutlet.name}` : ''}
+            {isReset && <span className="text-sm text-orange-600 ml-2">(Reset Aktif)</span>}
         </h1>
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button variant="outline" className="flex items-center gap-2">
               <RotateCcw className="h-4 w-4" />
-              Reset Perhitungan
+              {isReset ? 'Reset Sudah Aktif' : 'Reset Perhitungan'}
             </Button>
           </AlertDialogTrigger>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Konfirmasi Reset Perhitungan</AlertDialogTitle>
               <AlertDialogDescription>
-                Apakah Anda yakin ingin mereset semua perhitungan dashboard? 
-                Tindakan ini akan mengatur ulang semua data statistik ke nol dan tidak dapat dibatalkan.
+                {isReset ? (
+                  "Reset sudah aktif untuk hari ini. Apakah Anda ingin mereset ulang?"
+                ) : (
+                  "Apakah Anda yakin ingin mereset semua perhitungan dashboard? Tindakan ini akan mengatur ulang semua data statistik ke nol dan akan bertahan hingga hari berganti."
+                )}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Batal</AlertDialogCancel>
               <AlertDialogAction onClick={resetCalculations} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                Ya, Reset
+                {isReset ? 'Reset Ulang' : 'Ya, Reset'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
