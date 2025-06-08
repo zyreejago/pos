@@ -1,5 +1,4 @@
-'use client';
-
+"use client"
 import type { Metadata } from 'next';
 import { Users, CreditCard, Activity, ShoppingBag, FileText, Truck, Building, Loader2, TrendingUp, RotateCcw } from 'lucide-react';
 import { StatsCard } from '@/components/dashboard/stats-card';
@@ -9,10 +8,10 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import React, { useState, useEffect, useCallback, forwardRef } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, Timestamp, deleteDoc, doc, writeBatch } from 'firebase/firestore';
 import type { Transaction as FirestoreTransaction, User as StoredUserType, Product } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-import { startOfMonth, endOfMonth, format, isSameDay } from 'date-fns';
+import { startOfMonth, endOfMonth, format } from 'date-fns';
 import type { SVGProps } from 'react';
 import {
   AlertDialog,
@@ -63,19 +62,13 @@ interface SelectedOutlet {
   name: string;
 }
 
-interface ResetState {
-  isReset: boolean;
-  timestamp: string;
-  outletId?: string;
-  merchantId?: string;
-}
-
 export default function DashboardPage() {
   
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
   const [selectedOutlet, setSelectedOutlet] = useState<SelectedOutlet | null>(null);
   const [transactions, setTransactions] = useState<FirestoreTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isResetting, setIsResetting] = useState(false);
   const { toast } = useToast();
 
   const [totalRevenue, setTotalRevenue] = useState(0);
@@ -86,50 +79,6 @@ export default function DashboardPage() {
   const [products, setProducts] = useState<Product[]>([]);
   
   const [isClient, setIsClient] = useState(false);
-  const [isReset, setIsReset] = useState(false);
-
-  // Function to get reset key based on user context
-  const getResetKey = useCallback(() => {
-    if (currentUser?.role === 'kasir' && selectedOutlet) {
-      return `dashboardReset_${selectedOutlet.id}`;
-    } else if (currentUser?.merchantId) {
-      return `dashboardReset_${currentUser.merchantId}`;
-    }
-    return 'dashboardReset_default';
-  }, [currentUser, selectedOutlet]);
-
-  // Check if reset is active on component mount
-  useEffect(() => {
-    if (isClient && currentUser) {
-      const resetKey = getResetKey();
-      const savedReset = localStorage.getItem(resetKey);
-      
-      if (savedReset) {
-        try {
-          const resetData: ResetState = JSON.parse(savedReset);
-          const resetDate = new Date(resetData.timestamp);
-          const today = new Date();
-          
-          // Check if reset is still valid (same day)
-          if (isSameDay(resetDate, today)) {
-            setIsReset(true);
-            console.log('Reset masih aktif untuk hari ini');
-          } else {
-            // Reset expired, remove from localStorage
-            localStorage.removeItem(resetKey);
-            setIsReset(false);
-            console.log('Reset sudah expired, dihapus dari localStorage');
-          }
-        } catch (error) {
-          console.error('Error parsing reset data:', error);
-          localStorage.removeItem(resetKey);
-          setIsReset(false);
-        }
-      } else {
-        setIsReset(false);
-      }
-    }
-  }, [isClient, currentUser, selectedOutlet, getResetKey]);
 
   useEffect(() => {
     setIsClient(true);
@@ -185,18 +134,6 @@ export default function DashboardPage() {
   }, [currentUser, toast]);
 
   const fetchDashboardData = useCallback(async () => {
-    // If reset is active, don't fetch data
-    if (isReset) {
-      setIsLoading(false);
-      setTransactions([]);
-      setRecentSales([]);
-      setTotalRevenue(0);
-      setTotalTransactionsCount(0);
-      setActiveKasirsCount(0);
-      setTotalProfit(0);
-      return;
-    }
-
     if (!currentUser || !currentUser.merchantId) {
       setIsLoading(false);
       setTransactions([]);
@@ -305,36 +242,78 @@ export default function DashboardPage() {
       setRecentSales([]);
     }
     setIsLoading(false);
-  }, [currentUser, selectedOutlet, toast, products, isReset]);
+  }, [currentUser, selectedOutlet, toast, products]);
 
-  const resetCalculations = () => {
-    const resetKey = getResetKey();
-    const resetState: ResetState = {
-      isReset: true,
-      timestamp: new Date().toISOString(),
-      outletId: selectedOutlet?.id,
-      merchantId: currentUser?.merchantId
-    };
+  const resetCalculations = async () => {
+    if (!currentUser?.merchantId) {
+      toast({
+        title: "Error",
+        description: "User tidak valid untuk menghapus data.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsResetting(true);
     
-    // Save reset state to localStorage
-    localStorage.setItem(resetKey, JSON.stringify(resetState));
-    
-    // Set reset flag
-    setIsReset(true);
-    
-    // Reset all state values
-    setTotalRevenue(0);
-    setTotalTransactionsCount(0);
-    setActiveKasirsCount(0);
-    setTotalProfit(0);
-    setRecentSales([]);
-    setTransactions([]);
-    
-    toast({
-      title: "Perhitungan Direset Permanent",
-      description: "Semua data perhitungan dashboard telah direset ke nol dan akan bertahan hingga hari berganti.",
-      variant: "default"
-    });
+    try {
+      // Build query untuk menghapus transaksi berdasarkan merchant dan outlet
+      let queryConstraints = [
+        where("merchantId", "==", currentUser.merchantId)
+      ];
+
+      // Jika kasir, hanya hapus transaksi dari outlet yang dipilih
+      if (currentUser.role === 'kasir' && selectedOutlet?.id) {
+        queryConstraints.push(where("outletId", "==", selectedOutlet.id));
+      }
+
+      const q = query(collection(db, "transactions"), ...queryConstraints);
+      const querySnapshot = await getDocs(q);
+      
+      // Gunakan batch write untuk menghapus semua transaksi secara efisien
+      const batch = writeBatch(db);
+      let deleteCount = 0;
+      
+      querySnapshot.forEach((docSnapshot) => {
+        batch.delete(doc(db, "transactions", docSnapshot.id));
+        deleteCount++;
+      });
+      
+      // Commit batch delete
+      if (deleteCount > 0) {
+        await batch.commit();
+        
+        // Reset UI state setelah berhasil menghapus dari database
+        setTotalRevenue(0);
+        setTotalTransactionsCount(0);
+        setActiveKasirsCount(0);
+        setTotalProfit(0);
+        setRecentSales([]);
+        setTransactions([]);
+        
+        toast({
+          title: "Data Berhasil Dihapus",
+          description: `${deleteCount} transaksi telah dihapus permanen dari database.`,
+          variant: "default"
+        });
+      } else {
+        toast({
+          title: "Tidak Ada Data",
+          description: "Tidak ada transaksi yang ditemukan untuk dihapus.",
+          variant: "default"
+        });
+      }
+      
+    } catch (error: any) {
+      console.error("Error deleting transactions:", error);
+      toast({
+        title: "Error",
+        description: `Gagal menghapus data: ${error.message}`,
+        variant: "destructive"
+      });
+    } finally {
+      setIsResetting(false);
+    }
   };
 
   useEffect(() => {
@@ -398,35 +377,51 @@ export default function DashboardPage() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h1 className="text-3xl font-headline font-bold tracking-tight text-foreground">
             Dashboard {currentUser?.role === 'kasir' && selectedOutlet ? `- ${selectedOutlet.name}` : ''}
-            {isReset && <span className="text-sm text-orange-600 ml-2">(Reset Aktif)</span>}
         </h1>
         <AlertDialog>
           <AlertDialogTrigger asChild>
-            <Button variant="outline" className="flex items-center gap-2">
-              <RotateCcw className="h-4 w-4" />
-              {isReset ? 'Reset Sudah Aktif' : 'Reset Perhitungan'}
+            <Button 
+              variant="destructive" 
+              className="flex items-center gap-2"
+              disabled={isResetting}
+            >
+              {isResetting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Menghapus...
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="h-4 w-4" />
+                  Hapus Semua Data
+                </>
+              )}
             </Button>
           </AlertDialogTrigger>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Konfirmasi Reset Perhitungan</AlertDialogTitle>
+              <AlertDialogTitle>Konfirmasi Penghapusan Data</AlertDialogTitle>
               <AlertDialogDescription>
-                {isReset ? (
-                  "Reset sudah aktif untuk hari ini. Apakah Anda ingin mereset ulang?"
-                ) : (
-                  "Apakah Anda yakin ingin mereset semua perhitungan dashboard? Tindakan ini akan mengatur ulang semua data statistik ke nol dan akan bertahan hingga hari berganti."
+                Apakah Anda yakin ingin menghapus semua data transaksi? 
+                Tindakan ini akan menghapus data secara permanen dari database dan tidak dapat dibatalkan.
+                {currentUser?.role === 'kasir' && selectedOutlet && (
+                  <span className="block mt-2 font-medium">
+                    Hanya transaksi dari outlet "{selectedOutlet.name}" yang akan dihapus.
+                  </span>
                 )}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Batal</AlertDialogCancel>
-              <AlertDialogAction onClick={resetCalculations} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                {isReset ? 'Reset Ulang' : 'Ya, Reset'}
+              <AlertDialogAction 
+                onClick={resetCalculations}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Ya, Hapus Semua Data
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        {/* Add date range picker or other global filters here if needed */}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
