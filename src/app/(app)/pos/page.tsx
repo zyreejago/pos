@@ -282,10 +282,9 @@ export default function POSPage() {
       toast({ title: "Keranjang Kosong", description: "Harap tambahkan item ke keranjang sebelum pembayaran.", variant: "default" });
       return;
     }
-    // Removed validation for cash received - payment can proceed even without entering amount
-
+  
     setIsProcessingPayment(true);
-
+  
     const transactionItems: TransactionItem[] = cart.map(item => ({
       productId: item.productId,
       productName: item.productName,
@@ -294,7 +293,7 @@ export default function POSPage() {
       pricePerUnit: item.pricePerUnit,
       totalPrice: item.pricePerUnit * item.quantity,
     }));
-
+  
     const transactionDataForFirestore: Omit<FirestoreTransaction, 'id' | 'timestamp'> & { timestamp: any } = {
       kasirId: currentUser.id,
       kasirName: currentUser.displayName,
@@ -309,62 +308,92 @@ export default function POSPage() {
       paymentMethod: paymentMethod,
       timestamp: serverTimestamp(),
     };
-
+  
     if (paymentMethod === 'cash') {
       transactionDataForFirestore.cashReceived = cashReceived;
       transactionDataForFirestore.changeGiven = changeGiven;
     }
-
-    const newTransactionRef = doc(collection(db, "transactions")); 
-
+  
+    const newTransactionRef = doc(collection(db, "transactions"));
+  
     try {
       await runTransaction(db, async (firestoreTransactionRunner) => {
-        for (const cartItem of cart) {
-          const productRef = doc(db, "products", cartItem.productId);
+        // STEP 1: Lakukan semua operasi READ terlebih dahulu
+        const productDocs: { [productId: string]: { ref: any; data: FirestoreProduct } } = {};
+        
+        // Collect unique product IDs to avoid duplicate reads
+        const uniqueProductIds = [...new Set(cart.map(item => item.productId))];
+        
+        for (const productId of uniqueProductIds) {
+          const productRef = doc(db, "products", productId);
           const productDoc = await firestoreTransactionRunner.get(productRef);
-
+  
           if (!productDoc.exists()) {
-            throw new Error(`Produk ${cartItem.productName} tidak ditemukan di database.`);
+            const cartItem = cart.find(item => item.productId === productId);
+            throw new Error(`Produk ${cartItem?.productName || productId} tidak ditemukan di database.`);
           }
-
-          const productData = productDoc.data() as FirestoreProduct;
-          const unitIndex = productData.units.findIndex(u => u.name === cartItem.unitName);
-
+  
+          productDocs[productId] = {
+            ref: productRef,
+            data: productDoc.data() as FirestoreProduct
+          };
+        }
+  
+        // STEP 2: Validasi stok dan persiapkan data untuk update
+        const updatedProducts: { [productId: string]: FirestoreProduct } = {};
+        
+        for (const cartItem of cart) {
+          const productData = productDocs[cartItem.productId].data;
+          
+          // Fix TypeScript error by explicitly typing the parameter
+          const unitIndex = productData.units.findIndex((unit: any) => unit.name === cartItem.unitName);
+  
           if (unitIndex === -1) {
             throw new Error(`Unit ${cartItem.unitName} untuk produk ${cartItem.productName} tidak ditemukan.`);
           }
-
+  
           if (productData.units[unitIndex].stock < cartItem.quantity) {
             throw new Error(`Stok tidak mencukupi untuk ${productData.name} (${cartItem.unitName}). Tersedia: ${productData.units[unitIndex].stock}, Diminta: ${cartItem.quantity}.`);
           }
-
-          productData.units[unitIndex].stock -= cartItem.quantity;
-          firestoreTransactionRunner.update(productRef, {
-            units: productData.units,
+  
+          // Siapkan data yang sudah diupdate
+          if (!updatedProducts[cartItem.productId]) {
+            updatedProducts[cartItem.productId] = JSON.parse(JSON.stringify(productData)); // Deep copy
+          }
+          
+          updatedProducts[cartItem.productId].units[unitIndex].stock -= cartItem.quantity;
+        }
+  
+        // STEP 3: Lakukan semua operasi write setelah semua read selesai
+        for (const productId in updatedProducts) {
+          firestoreTransactionRunner.update(productDocs[productId].ref, {
+            units: updatedProducts[productId].units,
             updatedAt: serverTimestamp()
           });
         }
+        
+        // Tambahkan transaksi baru
         firestoreTransactionRunner.set(newTransactionRef, transactionDataForFirestore);
       });
-
+  
       toast({ title: "Pembayaran Berhasil!", description: `Total: ${formatCurrencyForReceipt(totalAmount)}. Stok diperbarui.` });
       
       const cleanRestOfData = Object.fromEntries(
         Object.entries(transactionDataForFirestore).filter(([key]) => key !== 'timestamp')
       ) as Omit<FirestoreTransaction, 'id' | 'timestamp'>;
-
+  
       const receiptDataForDisplay: ReceiptDisplayData = {
         ...cleanRestOfData,
         displayId: newTransactionRef.id,
-        displayTimestamp: new Date(), 
+        displayTimestamp: new Date(),
       };
-      setReceiptDetails(receiptDataForDisplay); 
-
+      setReceiptDetails(receiptDataForDisplay);
+  
       setCart([]);
       setCashReceived(0);
       setFormattedCashReceived('');
-      fetchProducts(); 
-
+      fetchProducts();
+  
     } catch (error: any) {
       console.error("Error processing payment:", error);
       toast({ title: "Pembayaran Gagal", description: error.message || "Terjadi kesalahan saat pembayaran.", variant: "destructive" });
