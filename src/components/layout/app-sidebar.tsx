@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   LifeBuoy,
   Archive, // New icon for Inventory
+  TrendingUp, // Icon untuk rekomendasi stok
 } from 'lucide-react';
 import {
   Sidebar,
@@ -44,7 +45,8 @@ const menuItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/outlets', label: 'Outlet Management', icon: Store },
   { href: '/products', label: 'Products', icon: ShoppingBag },
-  { href: '/inventory', label: 'Manajemen Stok', icon: Archive }, // Added Inventory
+  { href: '/inventory', label: 'Manajemen Stok', icon: Archive },
+  { href: '/stock-recommendations', label: 'Rekomendasi Stok Harian', icon: TrendingUp }, // Menu baru
   { href: '/suppliers', label: 'Suppliers', icon: Truck },
   { href: '/pos', label: 'Kasir (POS)', icon: DollarSign }, 
   { href: '/kasir', label: 'Manage Kasir', icon: Users }, 
